@@ -27,19 +27,14 @@ jobs:
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
-        # NOTE: Do NOT run `gradle wrapper --gradle-version X` here.
-        # That overwrites the committed wrapper (8.11.1) with an older version.
 
       - name: Download libXray.aar
         run: |
           mkdir -p app/libs
-          LATEST=$(curl -sS https://api.github.com/repos/2dust/v2rayNG/releases/latest \
-            | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "Fetching libXray.aar from v2rayNG $LATEST"
-          curl -fL "https://github.com/2dust/v2rayNG/releases/download/${LATEST}/libXray.aar" \
-            -o app/libs/libXray.aar \
-          || curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" \
-            -o app/libs/libXray.aar
+          echo "Downloading stable libXray.aar..."
+          curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.8.19/libXray.aar" -o app/libs/libXray.aar \
+          || curl -fL "https://github.com/2dust/v2rayNG/releases/download/v1.8.19/libXray.aar" -o app/libs/libXray.aar \
+          || curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.8.5/libXray.aar" -o app/libs/libXray.aar
           ls -lh app/libs/
 
       - name: Build Debug APK
