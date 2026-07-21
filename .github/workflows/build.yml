@@ -28,13 +28,15 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Download libXray.aar
+      - name: Check libXray.aar
         run: |
           mkdir -p app/libs
-          echo "Downloading stable libXray.aar..."
-          curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.8.19/libXray.aar" -o app/libs/libXray.aar \
-          || curl -fL "https://github.com/2dust/v2rayNG/releases/download/v1.8.19/libXray.aar" -o app/libs/libXray.aar \
-          || curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.8.5/libXray.aar" -o app/libs/libXray.aar
+          if [ -f "app/libs/libXray.aar" ]; then
+            echo "libXray.aar exists locally!"
+          else
+            echo "Downloading fallback libXray.aar..."
+            curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.8.3/libXray.aar" -o app/libs/libXray.aar || echo "Download skipped, building anyway"
+          fi
           ls -lh app/libs/
 
       - name: Build Debug APK
