@@ -10,7 +10,7 @@
     <string name="disconnected">غير متصل</string>
 
     <!-- Server list -->
-    <string name="no_servers">لا توجد سيرفرات متاحة</string>
+    <string name="no_servers">لا توجد سيرفرات — اضغط تحديث</string>
     <string name="update">تحديث</string>
     <string name="loading_servers">جارِ تحميل السيرفرات…</string>
     <string name="server_expires_in">%s</string>
@@ -54,4 +54,48 @@
     <string name="servers_count">%d سيرفر متاح</string>
     <string name="selected_server">السيرفر المختار</string>
     <string name="expires_label">ينتهي خلال</string>
+
+    <!-- Telegram -->
+    <string name="telegram_channel_url">https://t.me/boyktavpn</string>
+    <string name="telegram_join">انضم لقناتنا على تلغرام @boyktavpn</string>
+
+    <!-- Config export -->
+    <string name="connect_directly">اتصال مباشر</string>
+    <string name="export_boykta">تصدير BOYKTA</string>
+    <string name="locked_field">[مشفّر ومحمي]</string>
+
+    <!-- Privacy Policy -->
+    <string name="privacy_policy_title">سياسة الخصوصية والاستخدام</string>
+    <string name="privacy_policy_text">
+        آخر تحديث: يوليو 2026\n\n
+
+        ١. جمع البيانات\n
+        لا تقوم Boykta VPN بجمع أو تخزين أي بيانات شخصية أو سجلات اتصال (No-Log Policy). لا يتم تسجيل عنوان IP الحقيقي، مواقع التصفح، أو أي نشاط إنترنت.\n\n
+
+        ٢. البيانات المستخدمة\n
+        • قائمة السيرفرات: تُحمَّل من خادم Boykta المشفّر وتُخزَّن مؤقتاً على الجهاز.\n
+        • ملفات التكوين (.boykta): مشفّرة بـ AES-256-GCM. لا تُرسَل أي بيانات منها إلى جهات خارجية.\n\n
+
+        ٣. الأمان والتشفير\n
+        تستخدم Boykta VPN بروتوكولات تشفير قوية:\n
+        • VLESS / VMess / Trojan عبر TLS\n
+        • AES-256-GCM لتشفير ملفات التكوين\n
+        • SSL Pinning لمنع هجمات MITM\n\n
+
+        ٤. الاستخدام المسموح\n
+        • يُمنع استخدام التطبيق لأي نشاط غير قانوني.\n
+        • يُمنع محاولة اختراق أو تجاوز أنظمة الشبكة.\n
+        • المستخدم مسؤول كامل عن نشاطاته عبر التطبيق.\n\n
+
+        ٥. التطبيقات الخارجية\n
+        يُستخدم Xray-core كمحرك VPN (مفتوح المصدر - MIT License). لا ترتبط Boykta بشركة Xray ولا تتحمل مسؤولية أي مشكلات ناجمة عنها.\n\n
+
+        ٦. الاتصال بنا\n
+        للاستفسارات والدعم الفني:\n
+        قناة تلغرام: @boyktavpn\n\n
+
+        ٧. التعديلات\n
+        يحق لنا تعديل هذه السياسة في أي وقت. يُعدّ استمرار استخدام التطبيق موافقةً على السياسة المحدّثة.
+    </string>
+
 </resources>

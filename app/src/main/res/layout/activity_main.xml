@@ -1,465 +1,580 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView
+<androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background"
-    android:fillViewport="true">
+    android:background="@color/background">
 
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:layout_width="match_parent"
+    <!-- ══ TOP BAR ═══════════════════════════════════════════════════════════ -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:paddingBottom="24dp">
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="12dp"
+        android:background="@color/background_alt"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- ══ HEADER CARD ══════════════════════════════════════════════════ -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/headerCard"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="12dp"
-            android:layout_marginEnd="16dp"
-            app:cardBackgroundColor="@color/card"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeColor="@color/border"
-            app:strokeWidth="1dp"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-            <androidx.constraintlayout.widget.ConstraintLayout
+            <ImageView
+                android:id="@+id/ivShield"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_shield"
+                app:tint="@color/primary"
+                android:contentDescription="logo" />
+
+            <TextView
+                android:id="@+id/tvAppTitle"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="BOYKTA NET"
+                android:textColor="@color/primary"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.15"
+                android:fontFamily="monospace"
+                android:layout_marginStart="10dp" />
+
+            <!-- Speed counters -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="end">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="▲ "
+                        android:textColor="#00F2FE"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace" />
+                    <TextView
+                        android:id="@+id/tvUpSpeed"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 KB/s"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        tools:text="1.2 MB/s" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="▼ "
+                        android:textColor="#FF0055"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace" />
+                    <TextView
+                        android:id="@+id/tvDownSpeed"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 KB/s"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        tools:text="5.4 MB/s" />
+                </LinearLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Status row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="6dp">
+
+            <View
+                android:id="@+id/dotStatus"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/bg_status_dot" />
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="غير متصل"
+                android:textColor="@color/accent"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- ══ GLOWING CONNECT BUTTON ════════════════════════════════════════════ -->
+    <FrameLayout
+        android:id="@+id/connectWrapper"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_marginTop="32dp"
+        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Outer glow ring 1 -->
+        <View
+            android:layout_width="200dp"
+            android:layout_height="200dp"
+            android:background="@drawable/bg_ring_outer"
+            android:layout_gravity="center" />
+
+        <!-- Outer glow ring 2 -->
+        <View
+            android:layout_width="172dp"
+            android:layout_height="172dp"
+            android:background="@drawable/bg_ring_mid"
+            android:layout_gravity="center" />
+
+        <!-- Main button circle -->
+        <LinearLayout
+            android:id="@+id/btnConnectMain"
+            android:layout_width="148dp"
+            android:layout_height="148dp"
+            android:background="@drawable/bg_connect_button"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:layout_gravity="center"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:id="@+id/tvConnectIcon"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="▶"
+                android:textColor="@color/text_on_primary"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvConnectLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CONNECT"
+                android:textColor="@color/text_on_primary"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.12"
+                android:layout_marginTop="4dp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <!-- ══ SINGLE SERVER CARD ════════════════════════════════════════════════ -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardSelectedServer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="20dp"
+        android:layout_marginEnd="20dp"
+        android:layout_marginTop="24dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        app:cardBackgroundColor="@color/card"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/border"
+        app:strokeWidth="1dp"
+        app:layout_constraintTop_toBottomOf="@id/connectWrapper"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="16dp">
+
+            <!-- Flag/Icon placeholder -->
+            <TextView
+                android:id="@+id/tvServerFlag"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:text="🌐"
+                android:textSize="24sp"
+                android:gravity="center"
+                android:background="@color/surface_variant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent" />
+
+            <!-- Server Name -->
+            <TextView
+                android:id="@+id/tvSelectedName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="8dp"
+                tools:text="Germany #01"
+                app:layout_constraintTop_toTopOf="@id/tvServerFlag"
+                app:layout_constraintStart_toEndOf="@id/tvServerFlag"
+                app:layout_constraintEnd_toStartOf="@id/tvPingBadge" />
+
+            <!-- LIVE PING BADGE -->
+            <TextView
+                android:id="@+id/tvPingBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_ping_badge"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:textColor="@color/primary"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                tools:text="32 ms"
+                app:layout_constraintTop_toTopOf="@id/tvServerFlag"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <!-- Protocol Badge -->
+            <TextView
+                android:id="@+id/tvProtocolBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_protocol_badge"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:textColor="@color/primary"
+                android:textSize="9sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:layout_marginTop="6dp"
+                tools:text="VLESS"
+                app:layout_constraintTop_toBottomOf="@id/tvSelectedName"
+                app:layout_constraintStart_toEndOf="@id/tvServerFlag"
+                android:layout_marginStart="12dp" />
+
+            <!-- Countdown Timer -->
+            <TextView
+                android:id="@+id/tvSelectedCountdown"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:textColor="@color/accent"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:gravity="end"
+                android:layout_marginTop="6dp"
+                tools:text="02d 14h:22m:11s"
+                app:layout_constraintTop_toBottomOf="@id/tvPingBadge"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toEndOf="@id/tvProtocolBadge"
+                android:layout_marginStart="8dp" />
+
+            <!-- Tap hint -->
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:paddingStart="20dp"
-                android:paddingTop="16dp"
-                android:paddingEnd="20dp"
-                android:paddingBottom="16dp">
+                android:text="اضغط لتغيير السيرفر  ›"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:gravity="center"
+                android:layout_marginTop="10dp"
+                app:layout_constraintTop_toBottomOf="@id/tvProtocolBadge"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <ImageView
-                    android:id="@+id/ivShield"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:src="@drawable/ic_shield"
-                    android:contentDescription="VPN Shield"
-                    app:tint="@color/primary"
-                    app:layout_constraintTop_toTopOf="parent"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintStart_toStartOf="parent" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
-                <TextView
-                    android:id="@+id/tvAppTitle"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:text="BOYKTA NET"
-                    android:textColor="@color/primary"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.15"
-                    android:fontFamily="monospace"
-                    android:layout_marginStart="12dp"
-                    app:layout_constraintTop_toTopOf="@id/ivShield"
-                    app:layout_constraintBottom_toTopOf="@id/tvStatus"
-                    app:layout_constraintStart_toEndOf="@id/ivShield"
-                    app:layout_constraintEnd_toStartOf="@id/dotStatus" />
+    </com.google.android.material.card.MaterialCardView>
 
-                <View
-                    android:id="@+id/dotStatus"
-                    android:layout_width="10dp"
-                    android:layout_height="10dp"
-                    android:background="@drawable/bg_status_dot"
-                    android:layout_marginEnd="8dp"
-                    app:layout_constraintTop_toTopOf="parent"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent" />
+    <!-- ══ EMPTY STATE (no servers) ══════════════════════════════════════════ -->
+    <LinearLayout
+        android:id="@+id/layoutEmpty"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone"
+        android:layout_marginStart="20dp"
+        android:layout_marginEnd="20dp"
+        android:layout_marginTop="24dp"
+        app:layout_constraintTop_toBottomOf="@id/connectWrapper"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
-                <TextView
-                    android:id="@+id/tvStatus"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/disconnected"
-                    android:textColor="@color/accent"
-                    android:textSize="12sp"
-                    android:fontFamily="monospace"
-                    android:layout_marginStart="12dp"
-                    android:layout_marginTop="2dp"
-                    app:layout_constraintTop_toBottomOf="@id/tvAppTitle"
-                    app:layout_constraintStart_toEndOf="@id/ivShield"
-                    app:layout_constraintEnd_toStartOf="@id/dotStatus" />
-
-            </androidx.constraintlayout.widget.ConstraintLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- ══ CONNECT PANEL ════════════════════════════════════════════════ -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardConnectPanel"
-            android:layout_width="0dp"
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="16dp"
-            app:cardBackgroundColor="@color/card"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeColor="@color/border"
-            app:strokeWidth="1dp"
-            app:layout_constraintTop_toBottomOf="@id/headerCard"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
+            android:text="لا توجد سيرفرات — اضغط تحديث"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <!-- ══ LOADING INDICATOR ══════════════════════════════════════════════════ -->
+    <ProgressBar
+        android:id="@+id/progressBar"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:visibility="gone"
+        android:indeterminateTint="@color/primary"
+        app:layout_constraintTop_toBottomOf="@id/cardSelectedServer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="16dp" />
+
+    <!-- ══ BOTTOM ACTION BAR ═════════════════════════════════════════════════ -->
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:background="@color/background_alt"
+        android:paddingTop="12dp"
+        android:paddingBottom="16dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Update/Refresh -->
+        <LinearLayout
+            android:id="@+id/btnBarUpdate"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="6dp">
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_refresh"
+                app:tint="@color/primary"
+                android:contentDescription="تحديث" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="تحديث"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="3dp" />
+        </LinearLayout>
+
+        <!-- Logs -->
+        <LinearLayout
+            android:id="@+id/btnBarLogs"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="6dp">
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_logs_terminal"
+                app:tint="@color/text_secondary"
+                android:contentDescription="سجل" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="سجل"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="3dp" />
+        </LinearLayout>
+
+        <!-- Key / Config Creator -->
+        <LinearLayout
+            android:id="@+id/btnBarKey"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="6dp">
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_key"
+                app:tint="@color/neon_yellow"
+                android:contentDescription="مفتاح" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="مفتاح"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="3dp" />
+        </LinearLayout>
+
+        <!-- Telegram -->
+        <LinearLayout
+            android:id="@+id/btnBarTelegram"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="6dp">
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_telegram"
+                app:tint="#2AABEE"
+                android:contentDescription="تلغرام" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="قناتنا"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="3dp" />
+        </LinearLayout>
+
+        <!-- Exit -->
+        <LinearLayout
+            android:id="@+id/btnBarExit"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="6dp">
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_close"
+                app:tint="@color/accent"
+                android:contentDescription="خروج" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="خروج"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="3dp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- ══ LOG TERMINAL (hidden by default, toggled via Logs button) ═════════ -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardLogTerminal"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="8dp"
+        app:cardBackgroundColor="@color/log_terminal_bg"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/border"
+        app:strokeWidth="1dp"
+        app:layout_constraintTop_toBottomOf="@id/cardSelectedServer"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:padding="16dp"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:padding="10dp">
 
-                <!-- CONNECT / DISCONNECT button -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnConnectMain"
+                <TextView
                     android:layout_width="0dp"
-                    android:layout_height="52dp"
                     android:layout_weight="1"
-                    android:text="▶ CONNECT"
-                    android:textColor="#000000"
-                    android:textSize="15sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    app:backgroundTint="@color/primary"
-                    app:cornerRadius="14dp" />
-
-                <!-- Ping badge (inline, next to connect button) -->
-                <LinearLayout
-                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:layout_marginStart="12dp">
-
-                    <TextView
-                        android:id="@+id/tvPingLabel"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="PING"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="9sp"
-                        android:fontFamily="monospace"
-                        android:letterSpacing="0.1" />
-
-                    <TextView
-                        android:id="@+id/tvPingBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="…ms"
-                        android:textColor="@color/primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
-                        android:fontFamily="monospace"
-                        android:background="@drawable/bg_ping_badge"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingTop="4dp"
-                        android:paddingBottom="4dp"
-                        android:layout_marginTop="2dp"
-                        tools:text="42ms" />
-
-                </LinearLayout>
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- ══ SELECTED SERVER CARD ══════════════════════════════════════════ -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardSelectedServer"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="16dp"
-            android:visibility="gone"
-            app:cardBackgroundColor="@color/card"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:strokeColor="@color/primary"
-            app:strokeWidth="1dp"
-            app:layout_constraintTop_toBottomOf="@id/cardConnectPanel"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            tools:visibility="visible">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="14dp">
+                    android:text="⚡ LIVE LOG"
+                    android:textColor="@color/primary"
+                    android:textSize="11sp"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/btnCloseLog"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="السيرفر المختار"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.1" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginTop="6dp">
-
-                    <TextView
-                        android:id="@+id/tvSelectedName"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:textColor="@color/text_primary"
-                        android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:fontFamily="monospace"
-                        android:maxLines="1"
-                        android:ellipsize="end"
-                        tools:text="Germany Server 01" />
-
-                    <TextView
-                        android:id="@+id/tvProtocolBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/bg_protocol_badge"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp"
-                        android:paddingTop="3dp"
-                        android:paddingBottom="3dp"
-                        android:layout_marginStart="8dp"
-                        android:textColor="@color/primary"
-                        android:textSize="10sp"
-                        android:textStyle="bold"
-                        android:fontFamily="monospace"
-                        tools:text="VLESS" />
-
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tvSelectedCountdown"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:text="✕"
                     android:textColor="@color/accent"
-                    android:textSize="13sp"
-                    android:fontFamily="monospace"
-                    tools:text="01d 12h:30m:15s" />
-
+                    android:textSize="14sp"
+                    android:padding="4dp"
+                    android:clickable="true"
+                    android:focusable="true" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
 
-        <!-- ══ LOG TERMINAL ══════════════════════════════════════════════════ -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardLogs"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="16dp"
-            app:cardBackgroundColor="#0A0C12"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="0dp"
-            app:strokeColor="@color/divider"
-            app:strokeWidth="1dp"
-            app:layout_constraintTop_toBottomOf="@id/cardSelectedServer"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
-
-            <LinearLayout
+            <View
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:layout_height="1dp"
+                android:background="@color/divider" />
 
-                <!-- Log title bar -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="30dp"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:background="#0D1018">
-
-                    <View
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
-                        android:background="@drawable/bg_status_dot"
-                        android:backgroundTint="#FF5F57" />
-                    <View
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
-                        android:background="@drawable/bg_status_dot"
-                        android:backgroundTint="#FEBC2E"
-                        android:layout_marginStart="6dp" />
-                    <View
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
-                        android:background="@drawable/bg_status_dot"
-                        android:backgroundTint="#28C840"
-                        android:layout_marginStart="6dp" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:text="LIVE LOG"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="10sp"
-                        android:fontFamily="monospace"
-                        android:letterSpacing="0.15" />
-
-                </LinearLayout>
-
-                <!-- Log RecyclerView -->
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/rvLogs"
-                    android:layout_width="match_parent"
-                    android:layout_height="160dp"
-                    android:padding="10dp"
-                    android:scrollbars="vertical"
-                    android:clipToPadding="false"
-                    android:overScrollMode="never" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- ══ SERVER LIST LABEL ══════════════════════════════════════════════ -->
-        <TextView
-            android:id="@+id/tvServersLabel"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="24dp"
-            android:layout_marginTop="14dp"
-            android:layout_marginEnd="16dp"
-            android:text="السيرفرات المتاحة"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp"
-            android:fontFamily="monospace"
-            android:letterSpacing="0.1"
-            app:layout_constraintTop_toBottomOf="@id/cardLogs"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <!-- ══ EMPTY STATE ══════════════════════════════════════════════════ -->
-        <LinearLayout
-            android:id="@+id/layoutEmpty"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:visibility="gone"
-            android:paddingTop="24dp"
-            android:paddingBottom="24dp"
-            app:layout_constraintTop_toBottomOf="@id/tvServersLabel"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            tools:visibility="visible">
-
-            <ImageView
-                android:layout_width="60dp"
-                android:layout_height="60dp"
-                android:src="@drawable/ic_server_off"
-                android:contentDescription="No servers"
-                app:tint="@color/text_disabled"
-                android:alpha="0.6" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/no_servers"
-                android:textColor="@color/text_secondary"
-                android:textSize="14sp"
-                android:fontFamily="monospace"
-                android:layout_marginTop="12dp"
-                android:gravity="center" />
-
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvLogs"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="10dp"
+                android:clipToPadding="false"
+                tools:listitem="@layout/item_log_line" />
         </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
-        <!-- ══ SERVER RECYCLER VIEW ══════════════════════════════════════════ -->
-        <!-- NOTE: ScrollView + RecyclerView — we use a NestedScrollView pattern
-             but since the content is not huge, we set RecyclerView to wrap_content
-             with nestedScrollingEnabled=false -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvServers"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:nestedScrollingEnabled="false"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:clipToPadding="false"
-            android:scrollbars="none"
-            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
-            app:layout_constraintTop_toBottomOf="@id/tvServersLabel"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            tools:listitem="@layout/item_server"
-            tools:itemCount="3" />
-
-        <!-- ══ BOTTOM BUTTONS ════════════════════════════════════════════════ -->
-        <LinearLayout
-            android:id="@+id/bottomBar"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"
-            app:layout_constraintTop_toBottomOf="@id/rvServers"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnUpdate"
-                android:layout_width="match_parent"
-                android:layout_height="50dp"
-                android:text="@string/update"
-                android:textColor="#000000"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:fontFamily="monospace"
-                app:backgroundTint="@color/primary"
-                app:cornerRadius="14dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnImport"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="50dp"
-                android:layout_marginTop="8dp"
-                android:text="📥 استيراد .boykta"
-                android:textColor="@color/primary"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                app:strokeColor="@color/primary"
-                app:cornerRadius="14dp" />
-
-        </LinearLayout>
-
-        <!-- ══ FAB: Admin Export ══════════════════════════════════════════════ -->
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/fabExport"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="20dp"
-            android:layout_marginBottom="8dp"
-            android:src="@drawable/ic_shield"
-            android:contentDescription="تصدير كونفيغ"
-            app:backgroundTint="@color/surface"
-            app:tint="@color/primary"
-            app:borderWidth="0dp"
-            app:elevation="6dp"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintBottom_toTopOf="@id/bottomBar" />
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-</ScrollView>
+</androidx.constraintlayout.widget.ConstraintLayout>

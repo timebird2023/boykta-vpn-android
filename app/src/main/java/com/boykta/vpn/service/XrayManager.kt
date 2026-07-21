@@ -11,8 +11,9 @@ import org.json.JSONObject
  * Supports VLESS, Trojan, VMess, and Shadowsocks outbound configurations.
  * All events are also forwarded to VpnLogManager for the in-app log terminal.
  *
- * API: LibXray.invoke(requestJSON) → responseJSON
- *   { "apiVersion": 1, "method": "<camelCaseMethod>", "payload": { ... } }
+ * NOTE: All geosite/geoip routing rules have been REMOVED to avoid the
+ * "stat /system/bin/geosite.dat: no such file or directory" crash.
+ * Traffic routes directly through the proxy with no domain/IP classification.
  */
 object XrayManager {
 
@@ -103,6 +104,11 @@ object XrayManager {
 
     // ── Config builder ─────────────────────────────────────────────────────────
 
+    /**
+     * Builds a lightweight Xray JSON config WITHOUT any geosite/geoip rules.
+     * All traffic routes through the proxy — no external .dat files required.
+     * TUN: MTU 1500, DNS 8.8.8.8 / 1.1.1.1, route 0.0.0.0/0.
+     */
     private fun buildXrayConfig(proxyUri: String, socksPort: Int, httpPort: Int): String {
         val outbound = when {
             proxyUri.startsWith("vless://")  -> buildVlessOutbound(proxyUri)
@@ -113,7 +119,19 @@ object XrayManager {
         }
 
         return JSONObject().apply {
+            // Log level: warning (no debug noise)
             put("log", JSONObject().apply { put("loglevel", "warning") })
+
+            // DNS — simple and reliable, no geosite lookup
+            put("dns", JSONObject().apply {
+                put("servers", JSONArray().apply {
+                    put("8.8.8.8")
+                    put("1.1.1.1")
+                    put("localhost")
+                })
+            })
+
+            // Inbounds: SOCKS5 + HTTP proxy on localhost
             put("inbounds", JSONArray().apply {
                 put(JSONObject().apply {
                     put("port", socksPort)
@@ -122,48 +140,65 @@ object XrayManager {
                     put("settings", JSONObject().apply {
                         put("auth", "noauth")
                         put("udp", true)
+                        put("ip", "127.0.0.1")
                     })
                     put("sniffing", JSONObject().apply {
                         put("enabled", true)
                         put("destOverride", JSONArray().apply { put("http"); put("tls") })
+                        put("routeOnly", false)
                     })
                 })
                 put(JSONObject().apply {
                     put("port", httpPort)
                     put("protocol", "http")
                     put("listen", "127.0.0.1")
+                    put("settings", JSONObject().apply { put("allowTransparent", false) })
                 })
             })
+
+            // Outbounds: proxy + direct (NO freedom-geoip, NO geosite rules)
             put("outbounds", JSONArray().apply {
-                put(outbound)
-                put(JSONObject().apply {
-                    put("protocol", "freedom")
+                put(outbound)                    // index 0 = proxy (all traffic)
+                put(JSONObject().apply {         // index 1 = direct (for local bypass)
                     put("tag", "direct")
-                    put("settings", JSONObject().apply { put("domainStrategy", "UseIPv4") })
+                    put("protocol", "freedom")
+                    put("settings", JSONObject())
                 })
-                put(JSONObject().apply {
-                    put("protocol", "blackhole")
+                put(JSONObject().apply {         // index 2 = block
                     put("tag", "block")
+                    put("protocol", "blackhole")
+                    put("settings", JSONObject())
                 })
             })
+
+            // Routing: simple rules — NO geosite, NO geoip, NO .dat files
             put("routing", JSONObject().apply {
-                put("domainStrategy", "IPIfNonMatch")
+                put("domainStrategy", "AsIs")   // "AsIs" avoids any DNS-based lookups
                 put("rules", JSONArray().apply {
-                    // Block ads
+                    // Block local/private addresses from going through proxy
                     put(JSONObject().apply {
                         put("type", "field")
-                        put("outboundTag", "block")
-                        put("domain", JSONArray().apply { put("geosite:category-ads-all") })
+                        put("ip", JSONArray().apply {
+                            put("10.0.0.0/8")
+                            put("172.16.0.0/12")
+                            put("192.168.0.0/16")
+                            put("127.0.0.0/8")
+                            put("::1/128")
+                            put("fc00::/7")
+                            put("fe80::/10")
+                        })
+                        put("outboundTag", "direct")
                     })
-                    // Proxy all other
+                    // Everything else goes through proxy
                     put(JSONObject().apply {
                         put("type", "field")
-                        put("outboundTag", "proxy")
                         put("network", "tcp,udp")
+                        put("outboundTag", "proxy")
                     })
                 })
             })
-        }.toString()
+
+        }.toString(2)
     }
 
     // ── VLESS outbound ────────────────────────────────────────────────────────
@@ -195,29 +230,26 @@ object XrayManager {
     // ── Trojan outbound ───────────────────────────────────────────────────────
 
     private fun buildTrojanOutbound(uri: String): JSONObject {
-        // trojan://password@host:port?sni=...
         val withoutScheme = uri.removePrefix("trojan://")
         val atIdx = withoutScheme.indexOf('@')
         val password = withoutScheme.substring(0, atIdx)
         val rest = withoutScheme.substring(atIdx + 1)
-        val hashIdx = rest.indexOf('#')
         val qIdx = rest.indexOf('?')
-        val hostPart = if (qIdx != -1) rest.substring(0, qIdx)
-                       else if (hashIdx != -1) rest.substring(0, hashIdx)
-                       else rest
-        val lastColon = hostPart.lastIndexOf(':')
-        val host = hostPart.substring(0, lastColon)
-        val port = hostPart.substring(lastColon + 1).toIntOrNull() ?: 443
-        val query = if (qIdx != -1) {
+        val hashIdx = rest.indexOf('#')
+        val hostPort = if (qIdx != -1) rest.substring(0, qIdx)
+                       else rest.substring(0, if (hashIdx != -1) hashIdx else rest.length)
+        val lastColon = hostPort.lastIndexOf(':')
+        val host = hostPort.substring(0, lastColon)
+        val port = hostPort.substring(lastColon + 1).toIntOrNull() ?: 443
+        val queryStr = if (qIdx != -1) {
             val end = if (hashIdx != -1 && hashIdx > qIdx) hashIdx else rest.length
             rest.substring(qIdx + 1, end)
         } else ""
-        val params = query.split("&").associate {
+        val params = queryStr.split("&").associate {
             val kv = it.split("=")
             kv[0] to if (kv.size > 1) java.net.URLDecoder.decode(kv[1], "UTF-8") else ""
         }
-        val sni = params["sni"] ?: host
-        val network = params["type"] ?: "tcp"
+        val sni = params["sni"] ?: params["peer"] ?: host
 
         VpnLogManager.info("Trojan → $host:$port (sni=$sni)")
         return JSONObject().apply {
@@ -232,24 +264,35 @@ object XrayManager {
                     })
                 })
             })
-            put("streamSettings", buildStreamSettings(network, "tls", sni, "/", host))
+            put("streamSettings", buildStreamSettings(
+                params["type"] ?: "tcp",
+                if (params["security"] == "none") "none" else "tls",
+                sni,
+                params["path"] ?: "/",
+                host
+            ))
         }
     }
 
     // ── VMess outbound ────────────────────────────────────────────────────────
 
     private fun buildVmessOutbound(uri: String): JSONObject {
-        val encoded = uri.removePrefix("vmess://")
-        val decoded = String(android.util.Base64.decode(encoded, android.util.Base64.DEFAULT))
-        val obj = JSONObject(decoded)
-        val host = obj.optString("add")
-        val port = obj.optString("port", "443").toIntOrNull() ?: 443
-        val uuid = obj.optString("id")
-        val network = obj.optString("net", "ws")
-        val path = obj.optString("path", "/")
-        val hostHeader = obj.optString("host", host)
-        val tls = obj.optString("tls", "")
-        val sni = obj.optString("sni", host)
+        val base64 = uri.removePrefix("vmess://")
+        val json = try {
+            val decoded = String(android.util.Base64.decode(base64, android.util.Base64.DEFAULT))
+            JSONObject(decoded)
+        } catch (e: Exception) {
+            VpnLogManager.error("VMess parse error: ${e.message}")
+            return buildFallbackOutbound()
+        }
+        val host = json.optString("add", "")
+        val port = json.optInt("port", 443)
+        val uuid = json.optString("id", "")
+        val network = json.optString("net", "ws")
+        val tls = json.optString("tls", "none")
+        val sni = json.optString("sni", host)
+        val path = json.optString("path", "/")
+        val hostHeader = json.optString("host", host)
 
         VpnLogManager.info("VMess → $host:$port (net=$network)")
         return JSONObject().apply {
@@ -277,7 +320,6 @@ object XrayManager {
     // ── Shadowsocks outbound ──────────────────────────────────────────────────
 
     private fun buildShadowsocksOutbound(uri: String): JSONObject {
-        // ss://base64(method:password)@host:port#name  (SIP002)
         val withoutScheme = uri.removePrefix("ss://")
         val hashIdx = withoutScheme.indexOf('#')
         val main = if (hashIdx != -1) withoutScheme.substring(0, hashIdx) else withoutScheme
@@ -309,17 +351,30 @@ object XrayManager {
         }
     }
 
-    // ── Stream settings helper ────────────────────────────────────────────────
+    // ── Fallback outbound (should never happen) ───────────────────────────────
+
+    private fun buildFallbackOutbound(): JSONObject = JSONObject().apply {
+        put("tag", "proxy")
+        put("protocol", "freedom")
+        put("settings", JSONObject())
+    }
+
+    // ── Stream settings builder ───────────────────────────────────────────────
 
     private fun buildStreamSettings(
-        network: String, security: String, sni: String, path: String, host: String
+        network: String,
+        security: String,
+        sni: String,
+        path: String,
+        host: String
     ): JSONObject = JSONObject().apply {
         put("network", network)
         put("security", security)
-        if (security == "tls" || security == "reality") {
+        if (security == "tls") {
             put("tlsSettings", JSONObject().apply {
                 put("serverName", sni.ifEmpty { host })
                 put("allowInsecure", false)
+                put("fingerprint", "chrome")
             })
         }
         if (network == "ws") {
@@ -330,6 +385,12 @@ object XrayManager {
         }
         if (network == "grpc") {
             put("grpcSettings", JSONObject().apply { put("serviceName", path.ifEmpty { "" }) })
+        }
+        if (network == "h2") {
+            put("httpSettings", JSONObject().apply {
+                put("path", path.ifEmpty { "/" })
+                put("host", JSONArray().apply { put(host) })
+            })
         }
     }
 

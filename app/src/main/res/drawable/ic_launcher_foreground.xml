@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer neon ring - cyan -->
+    <path
+        android:fillColor="#00F2FE"
+        android:pathData="M54,10 C29.7,10 10,29.7 10,54 C10,78.3 29.7,98 54,98 C78.3,98 98,78.3 98,54 C98,29.7 78.3,10 54,10 Z M54,16 C74.98,16 92,33.02 92,54 C92,74.98 74.98,92 54,92 C33.02,92 16,74.98 16,54 C16,33.02 33.02,16 54,16 Z" />
+
+    <!-- Inner shield body - dark -->
+    <path
+        android:fillColor="#0B0E14"
+        android:pathData="M54,20 C54,20 32,28 32,46 C32,60 40,70 54,76 C68,70 76,60 76,46 C76,28 54,20 54,20 Z" />
+
+    <!-- Shield outline - neon cyan -->
+    <path
+        android:fillColor="#00F2FE"
+        android:pathData="M54,18 C54,18 30,27 30,46 C30,61 39,72 54,78 C69,72 78,61 78,46 C78,27 54,18 54,18 Z M54,24 C54,24 36,32 36,46 C36,59 43,68 54,72 C65,68 72,59 72,46 C72,32 54,24 54,24 Z" />
+
+    <!-- B letter - neon pink -->
+    <path
+        android:fillColor="#FF0055"
+        android:pathData="M45,33 L45,57 L56,57 C60.4,57 64,53.4 64,49 C64,46.5 62.8,44.3 61,42.9 C62.2,41.6 63,39.8 63,38 C63,34.7 60.3,33 57,33 Z M50,38 L56,38 C57.1,38 58,38.9 58,40 C58,41.1 57.1,42 56,42 L50,42 Z M50,47 L57,47 C58.7,47 60,48.3 60,50 C60,51.7 58.7,53 57,53 L50,53 Z" />
+
+    <!-- Neon dot accent (drawn as path circle) -->
+    <path
+        android:fillColor="#00F2FE"
+        android:pathData="M54,61 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+
+</vector>

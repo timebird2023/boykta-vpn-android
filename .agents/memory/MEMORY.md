@@ -1,1 +1,2 @@
 - [Android build setup on Replit](android-build-setup.md) — env vars, SDK paths, all build fixes applied to get Boykta VPN compiling.
+- [Boykta VPN UI overhaul](boykta-vpn-ui-overhaul.md) — full redesign: single server card, auto-ping, bottom sheet select, key decisions.

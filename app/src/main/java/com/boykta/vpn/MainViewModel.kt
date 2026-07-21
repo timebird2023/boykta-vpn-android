@@ -5,11 +5,8 @@ import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.boykta.vpn.api.ApiClient
-import com.boykta.vpn.api.CryptoHelper
-import com.boykta.vpn.config.BoykConfig
 import com.boykta.vpn.config.BoykConfigManager
 import com.boykta.vpn.db.LocalDatabase
-import com.boykta.vpn.db.LocalServer
 import com.boykta.vpn.db.toServer
 import com.boykta.vpn.model.Announcement
 import com.boykta.vpn.model.Server
@@ -17,8 +14,8 @@ import com.boykta.vpn.model.isExpired
 import com.boykta.vpn.service.VpnLogManager
 import com.boykta.vpn.util.LatencyChecker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -58,6 +55,7 @@ class MainViewModel @Inject constructor(
     val vpnLogs: SharedFlow<String> = VpnLogManager.logs
 
     private var lastNotifId = -1
+    private var autoPingJob: Job? = null
 
     // ── Remote ────────────────────────────────────────────────────────────────
 
@@ -103,58 +101,54 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    // ── Ping ──────────────────────────────────────────────────────────────────
+    // ── Auto Ping (every 1 second) ────────────────────────────────────────────
 
-    fun measurePing() {
-        viewModelScope.launch {
-            pingMs.value = null
-            val latency = LatencyChecker.measureMs()
-            pingMs.value = latency
-            val label = if ((latency ?: -1) < 0) "timeout" else "${latency}ms"
-            VpnLogManager.info("Ping dns.google → $label")
-        }
-    }
-
-    // ── Local (.boykta import) ────────────────────────────────────────────────
-
-    fun importLocalServer(config: BoykConfig) {
-        viewModelScope.launch {
-            val vlessUri   = BoykConfigManager.configToVlessUri(config)
-            val encryptedUri = CryptoHelper.encrypt(vlessUri)
-            val expiresAt  = System.currentTimeMillis() + config.expiresSeconds * 1_000L
-
-            dao.insert(
-                LocalServer(
-                    displayName  = config.name,
-                    encryptedUri = encryptedUri,
-                    expiresAt    = expiresAt,
-                )
-            )
-            dao.deleteExpired()
-            VpnLogManager.success("Imported server: ${config.name}")
-
-            // Show custom toast if the config has one
-            if (config.customToast.isNotBlank()) {
-                Toast.makeText(getApplication(), config.customToast, Toast.LENGTH_LONG).show()
+    /**
+     * Starts a background coroutine that pings https://dns.google every 1000 ms
+     * and emits the result into [pingMs]. Call once from MainActivity.
+     */
+    fun startAutoPing() {
+        if (autoPingJob?.isActive == true) return
+        autoPingJob = viewModelScope.launch {
+            while (isActive) {
+                val ms = LatencyChecker.measureMs()
+                pingMs.value = ms
+                delay(1_000L)
             }
         }
     }
 
-    /**
-     * Resolve the actual proxy URI before connecting.
-     * - Remote servers: URI already in server.config (decrypted by API interceptor)
-     * - Local servers: decrypt from Room DB
-     */
-    suspend fun resolveVlessUri(server: Server): String? {
-        return if (server.config.isNotBlank()) {
-            server.config
-        } else {
-            val encryptedUri = dao.getEncryptedUri(server.id) ?: return null
-            try { CryptoHelper.decrypt(encryptedUri) } catch (_: Exception) { null }
+    fun stopAutoPing() {
+        autoPingJob?.cancel()
+        autoPingJob = null
+    }
+
+    /** One-shot manual ping (used for initial measurement before loop starts) */
+    fun measurePing() {
+        viewModelScope.launch {
+            pingMs.value = LatencyChecker.measureMs()
         }
     }
 
+    // ── Notifications polling ──────────────────────────────────────────────────
+
+    fun startNotificationPolling() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(60_000L)
+                checkNotification()
+            }
+        }
+    }
+
+    // ── Server selection ──────────────────────────────────────────────────────
+
     fun selectServer(server: Server) {
         selectedServer.value = server
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopAutoPing()
     }
 }
