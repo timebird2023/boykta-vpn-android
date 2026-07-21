@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/card"
+    android:padding="24dp"
+    android:gap="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="📥 تم قراءة الملف بنجاح"
+        android:textColor="@color/accent"
+        android:textSize="18sp"
+        android:textStyle="bold"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="هل تريد إضافة هذا السيرفر؟"
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp"/>
+
+    <!-- Shield icon + server name box -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/surface"
+        android:padding="16dp"
+        android:gravity="center_vertical"
+        android:gap="12dp">
+
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_shield"
+            android:contentDescription="shield"/>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gap="4dp">
+
+            <TextView
+                android:id="@+id/tvImportName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/tvImportExpiry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/primary"
+                android:textSize="13sp"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Security note -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="🔒 بيانات الاتصال الحقيقية مشفرة ومخفية — لن تُعرض أبداً"
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp"
+        android:gravity="center"/>
+
+    <!-- Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gap="12dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCancelImport"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1"
+            android:text="إلغاء"
+            android:textColor="@color/text_secondary"
+            app:strokeColor="@color/border"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnConfirmImport"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1"
+            android:text="✅ إضافة السيرفر"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            app:backgroundTint="@color/accent"
+            app:cornerRadius="14dp"/>
+    </LinearLayout>
+</LinearLayout>

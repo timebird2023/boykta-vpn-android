@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude sensitive VPN config files from backup -->
+    <exclude domain="file" path="vpn_configs/" />
+    <exclude domain="sharedpref" path="vpn_prefs.xml" />
+    <exclude domain="database" path="boykta_vpn.db" />
+</full-backup-content>

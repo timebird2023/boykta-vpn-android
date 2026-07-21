@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="vpn_configs/" />
+        <exclude domain="sharedpref" path="vpn_prefs.xml" />
+        <exclude domain="database" path="boykta_vpn.db" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="vpn_configs/" />
+        <exclude domain="sharedpref" path="vpn_prefs.xml" />
+        <exclude domain="database" path="boykta_vpn.db" />
+    </device-transfer>
+</data-extraction-rules>

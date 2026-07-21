@@ -1,0 +1,10 @@
+.gradle/
+build/
+app/build/
+app/libs/          # libXray.aar is downloaded by GitHub Actions — don't commit it
+local.properties
+*.keystore
+*.jks
+*.iml
+.idea/
+.DS_Store
