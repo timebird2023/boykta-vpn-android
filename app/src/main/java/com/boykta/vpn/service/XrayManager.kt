@@ -284,12 +284,14 @@ object XrayManager {
                     })
                 })
             })
-            put("streamSettings", buildStreamSettings(
+            // Support explicit host-header override via params["host"] (important for WS CDN fronting)
+        val wsHostHeader = params["host"]?.takeIf { it.isNotBlank() } ?: host
+        put("streamSettings", buildStreamSettings(
                 params["type"] ?: "tcp",
                 if (params["security"] == "none") "none" else "tls",
                 sni,
                 params["path"] ?: "/",
-                host
+                wsHostHeader
             ))
         }
     }

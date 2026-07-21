@@ -13,7 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.view.View
-import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -21,6 +21,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -53,6 +55,9 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
 
     private val viewModel: MainViewModel by viewModels()
 
+    // ── Drawer ─────────────────────────────────────────────────────────────────
+    private lateinit var drawerLayout: DrawerLayout
+
     // ── Views ──────────────────────────────────────────────────────────────────
     private lateinit var tvStatus: TextView
     private lateinit var dotStatus: View
@@ -61,7 +66,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
 
     // Connect button (FrameLayout circle)
     private lateinit var btnConnectMain: View
-    private lateinit var tvConnectIcon: TextView
+    private lateinit var ivConnectIcon: ImageView   // vector drawable — no emoji
     private lateinit var tvConnectLabel: TextView
 
     // Selected server card
@@ -80,6 +85,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     private lateinit var tvUnlockedPath: TextView
     private lateinit var tvUnlockedSni: TextView
     private lateinit var tvUnlockedHostHeader: TextView
+    private lateinit var btnReconnect: View
 
     // Bottom bar buttons
     private lateinit var btnBarUpdate: View
@@ -173,6 +179,14 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         handleIntent(intent)
     }
 
+    override fun onBackPressed() {
+        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            drawerLayout.closeDrawer(GravityCompat.START)
+        } else {
+            super.onBackPressed()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         selectedCountdownJob?.cancel()
@@ -186,13 +200,15 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     // ── View binding ──────────────────────────────────────────────────────────
 
     private fun bindViews() {
+        drawerLayout     = findViewById(R.id.drawerLayout)
+
         tvStatus          = findViewById(R.id.tvStatus)
         dotStatus         = findViewById(R.id.dotStatus)
         tvUpSpeed         = findViewById(R.id.tvUpSpeed)
         tvDownSpeed       = findViewById(R.id.tvDownSpeed)
 
         btnConnectMain    = findViewById(R.id.btnConnectMain)
-        tvConnectIcon     = findViewById(R.id.tvConnectIcon)
+        ivConnectIcon     = findViewById(R.id.ivConnectIcon)   // ImageView, no emoji
         tvConnectLabel    = findViewById(R.id.tvConnectLabel)
 
         cardSelectedServer = findViewById(R.id.cardSelectedServer)
@@ -209,6 +225,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         tvUnlockedPath       = findViewById(R.id.tvUnlockedPath)
         tvUnlockedSni        = findViewById(R.id.tvUnlockedSni)
         tvUnlockedHostHeader = findViewById(R.id.tvUnlockedHostHeader)
+        btnReconnect         = findViewById(R.id.btnReconnect)
 
         btnBarUpdate      = findViewById(R.id.btnBarUpdate)
         btnBarLogs        = findViewById(R.id.btnBarLogs)
@@ -224,7 +241,52 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     // ── Click listeners ────────────────────────────────────────────────────────
 
     private fun setupClickListeners() {
-        // Main connect/disconnect button
+        // Hamburger — open side drawer
+        findViewById<View>(R.id.btnMenuDrawer).setOnClickListener {
+            if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                drawerLayout.closeDrawer(GravityCompat.START)
+            } else {
+                drawerLayout.openDrawer(GravityCompat.START)
+            }
+        }
+
+        // ── Drawer items ───────────────────────────────────────────────────────
+
+        // Developer Channel
+        findViewById<View>(R.id.drawerItemTelegram).setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.START)
+            val url = getString(R.string.telegram_channel_url)
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+
+        // Import Offline Config
+        findViewById<View>(R.id.drawerItemImport).setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.START)
+            importFileLauncher.launch("*/*")
+        }
+
+        // Live Terminal Logs
+        findViewById<View>(R.id.drawerItemLogs).setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.START)
+            val visible = cardLogTerminal.visibility == View.VISIBLE
+            cardLogTerminal.visibility = if (visible) View.GONE else View.VISIBLE
+        }
+
+        // Check Updates
+        findViewById<View>(R.id.drawerItemUpdate).setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.START)
+            viewModel.loadServers()
+            showSnack("جارِ التحقق من التحديثات…")
+        }
+
+        // Exit (drawer)
+        findViewById<View>(R.id.drawerItemExit).setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.START)
+            if (isVpnConnected) disconnectVpn()
+            finishAndRemoveTask()
+        }
+
+        // ── Main connect/disconnect button ────────────────────────────────────
         btnConnectMain.setOnClickListener {
             if (isVpnConnected) {
                 disconnectVpn()
@@ -244,7 +306,21 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         // Server card → open bottom sheet
         cardSelectedServer.setOnClickListener { openServerSelectSheet() }
 
-        // Bottom bar buttons
+        // Reconnect (unlocked config panel)
+        btnReconnect.setOnClickListener {
+            val server = viewModel.selectedServer.value ?: return@setOnClickListener
+            if (isVpnConnected) {
+                disconnectVpn()
+                lifecycleScope.launch {
+                    delay(800)
+                    requestVpnPermissionAndConnect(server)
+                }
+            } else {
+                requestVpnPermissionAndConnect(server)
+            }
+        }
+
+        // ── Bottom bar buttons ─────────────────────────────────────────────────
         btnBarUpdate.setOnClickListener {
             viewModel.loadServers()
             showSnack("جارِ تحديث السيرفرات…")
@@ -282,9 +358,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         }
 
         btnBarExit.setOnClickListener {
-            if (isVpnConnected) {
-                disconnectVpn()
-            }
+            if (isVpnConnected) disconnectVpn()
             finishAndRemoveTask()
         }
 
@@ -322,7 +396,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
             }
         }
 
-        // Live ping badge (updated every 1 second)
+        // Live ping badge (updated every 1 second) — IO-safe via ViewModel
         lifecycleScope.launch {
             viewModel.pingMs.collectLatest { ms ->
                 val text = when {
@@ -381,20 +455,20 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     private fun updateServerCard(server: Server) {
         tvSelectedName.text = server.name
 
-        // Protocol badge: show "كونفيغ مغلق" for locked local configs
+        // Protocol badge: show "كونفيغ مغلق" for locked — NO encryption algorithm names
         tvProtocolBadge.text = when {
             server.protocol == "local" && server.isLocked  -> "كونفيغ مغلق"
             server.protocol == "local" && !server.isLocked -> "UNLOCKED"
             else                                           -> server.protocolLabel()
         }
 
-        tvServerFlag.text = flagEmoji(server.name)
+        // Country code badge — NO emoji, plain 2-letter code
+        tvServerFlag.text = countryCode(server.name)
     }
 
     /**
      * Show/hide the unlocked-config panel depending on the selected server.
-     * Unlocked local servers and the built-in test server reveal their params.
-     * Locked servers never show raw connection details.
+     * Unlocked configs show full params; locked configs show nothing.
      */
     private fun updateUnlockedPanel(server: Server) {
         val show = !server.isLocked && (server.protocol == "local" || server.protocol == "vless"
@@ -402,7 +476,6 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
                 && server.config.isNotBlank()
 
         if (show) {
-            // Parse visible params from the config URI
             val params = parseVisibleParams(server)
             if (params != null) {
                 cardUnlockedConfig.visibility = View.VISIBLE
@@ -414,9 +487,8 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
                 cardUnlockedConfig.visibility = View.GONE
             }
         } else if (server.protocol == "local" && !server.isLocked && server.configJson.isNotBlank()) {
-            // Unlocked local config stored as JSON
             try {
-                val cfg = BoykConfig.fromJson(server.configJson)
+                val cfg = com.boykta.vpn.config.BoykConfig.fromJson(server.configJson)
                 cardUnlockedConfig.visibility = View.VISIBLE
                 tvUnlockedHost.text       = cfg.host
                 tvUnlockedPath.text       = cfg.path
@@ -461,6 +533,31 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
                         hostHeader = params["host"] ?: realHost,
                     )
                 }
+                uri.startsWith("trojan://") -> {
+                    val withoutScheme = uri.removePrefix("trojan://")
+                    val atIdx = withoutScheme.indexOf('@')
+                    val rest = withoutScheme.substring(atIdx + 1)
+                    val qIdx = rest.indexOf('?')
+                    val hashIdx = rest.indexOf('#')
+                    val hostPort = if (qIdx != -1) rest.substring(0, qIdx)
+                                   else rest.substring(0, if (hashIdx != -1) hashIdx else rest.length)
+                    val lastColon = hostPort.lastIndexOf(':')
+                    val realHost = hostPort.substring(0, lastColon)
+                    val queryStr = if (qIdx != -1) {
+                        val end = if (hashIdx != -1 && hashIdx > qIdx) hashIdx else rest.length
+                        rest.substring(qIdx + 1, end)
+                    } else ""
+                    val params = queryStr.split("&").associate {
+                        val kv = it.split("=")
+                        kv[0] to if (kv.size > 1) java.net.URLDecoder.decode(kv[1], "UTF-8") else ""
+                    }
+                    VisibleParams(
+                        host       = realHost,
+                        path       = params["path"] ?: "/",
+                        sni        = params["sni"] ?: realHost,
+                        hostHeader = params["host"]?.takeIf { it.isNotBlank() } ?: realHost,
+                    )
+                }
                 else -> null
             }
         } catch (_: Exception) { null }
@@ -476,27 +573,31 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         }
     }
 
-    private fun flagEmoji(name: String): String {
+    /**
+     * Returns a 2-letter country code (NO emoji) based on server name.
+     * Shown in the server flag badge inside the server card.
+     */
+    private fun countryCode(name: String): String {
         val n = name.lowercase()
         return when {
-            n.contains("germany") || n.contains("de ") || n.contains("deutsch") -> "\uD83C\uDDE9\uD83C\uDDEA"
-            n.contains("usa") || n.contains("us ") || n.contains("united states") -> "\uD83C\uDDFA\uD83C\uDDF8"
-            n.contains("uk") || n.contains("united kingdom") || n.contains("britain") -> "\uD83C\uDDEC\uD83C\uDDE7"
-            n.contains("france") || n.contains("fr ") -> "\uD83C\uDDEB\uD83C\uDDF7"
-            n.contains("netherlands") || n.contains("nl") || n.contains("dutch") -> "\uD83C\uDDF3\uD83C\uDDF1"
-            n.contains("japan") || n.contains("jp") -> "\uD83C\uDDEF\uD83C\uDDF5"
-            n.contains("singapore") || n.contains("sg") -> "\uD83C\uDDF8\uD83C\uDDEC"
-            n.contains("turkey") || n.contains("tr ") -> "\uD83C\uDDF9\uD83C\uDDF7"
-            n.contains("russia") || n.contains("ru ") -> "\uD83C\uDDF7\uD83C\uDDFA"
-            n.contains("canada") || n.contains("ca ") -> "\uD83C\uDDE8\uD83C\uDDE6"
-            n.contains("australia") || n.contains("au ") -> "\uD83C\uDDE6\uD83C\uDDFA"
-            n.contains("iran") || n.contains("ir ") -> "\uD83C\uDDEE\uD83C\uDDF7"
-            n.contains("uae") || n.contains("dubai") -> "\uD83C\uDDE6\uD83C\uDDEA"
-            n.contains("sweden") || n.contains("se ") -> "\uD83C\uDDF8\uD83C\uDDEA"
-            n.contains("finland") || n.contains("fi ") -> "\uD83C\uDDEB\uD83C\uDDEE"
-            n.contains("poland") || n.contains("pl ") -> "\uD83C\uDDF5\uD83C\uDDF1"
-            n.contains("test") || n.contains("khaled") -> "\uD83E\uDDEA"
-            else -> "\uD83C\uDF10"
+            n.contains("germany") || n.contains("de ") || n.contains("deutsch") -> "DE"
+            n.contains("usa") || n.contains("us ") || n.contains("united states") -> "US"
+            n.contains("uk") || n.contains("united kingdom") || n.contains("britain") -> "UK"
+            n.contains("france") || n.contains("fr ") -> "FR"
+            n.contains("netherlands") || n.contains("nl") || n.contains("dutch") -> "NL"
+            n.contains("japan") || n.contains("jp") -> "JP"
+            n.contains("singapore") || n.contains("sg") -> "SG"
+            n.contains("turkey") || n.contains("tr ") -> "TR"
+            n.contains("russia") || n.contains("ru ") -> "RU"
+            n.contains("canada") || n.contains("ca ") -> "CA"
+            n.contains("australia") || n.contains("au ") -> "AU"
+            n.contains("iran") || n.contains("ir ") -> "IR"
+            n.contains("uae") || n.contains("dubai") -> "AE"
+            n.contains("sweden") || n.contains("se ") -> "SE"
+            n.contains("finland") || n.contains("fi ") -> "FI"
+            n.contains("poland") || n.contains("pl ") -> "PL"
+            n.contains("test") || n.contains("diag") -> "!!"
+            else -> "??"
         }
     }
 
@@ -514,7 +615,6 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         ) { server ->
             viewModel.selectServer(server)
             if (isVpnConnected) {
-                // Switch server: disconnect then reconnect
                 disconnectVpn()
                 lifecycleScope.launch {
                     delay(800)
@@ -537,20 +637,20 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     }
 
     private fun startVpnConnection(server: Server) {
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             // Resolve config URI: local servers store an encrypted URI in DB
             val resolvedServer = if (server.protocol == "local" && server.config.isBlank()) {
                 val db = LocalDatabase.get(this@MainActivity)
                 val encrypted = db.localServerDao().getEncryptedUri(server.id)
                 if (encrypted.isNullOrBlank()) {
-                    showSnack("خطأ: تعذّر قراءة تكوين السيرفر")
+                    withContext(Dispatchers.Main) { showSnack("خطأ: تعذّر قراءة تكوين السيرفر") }
                     return@launch
                 }
                 val plainUri = try {
                     if (CryptoHelper.isEncrypted(encrypted)) CryptoHelper.decrypt(encrypted)
-                    else encrypted  // stored unencrypted (unlocked)
+                    else encrypted
                 } catch (e: Exception) {
-                    showSnack("خطأ في فك تشفير السيرفر: ${e.message}")
+                    withContext(Dispatchers.Main) { showSnack("خطأ في فك تشفير السيرفر: ${e.message}") }
                     return@launch
                 }
                 server.copy(config = plainUri)
@@ -558,14 +658,16 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
                 server
             }
 
-            val svc = Intent(this@MainActivity, BoykVpnService::class.java).apply {
-                action = BoykVpnService.ACTION_CONNECT
-            }
-            startForegroundService(svc)
-            vpnService?.connectToServer(resolvedServer) ?: run {
-                bindVpnService()
-                delay(300)
-                vpnService?.connectToServer(resolvedServer)
+            withContext(Dispatchers.Main) {
+                val svc = Intent(this@MainActivity, BoykVpnService::class.java).apply {
+                    action = BoykVpnService.ACTION_CONNECT
+                }
+                startForegroundService(svc)
+                vpnService?.connectToServer(resolvedServer) ?: run {
+                    bindVpnService()
+                    delay(300)
+                    vpnService?.connectToServer(resolvedServer)
+                }
             }
         }
     }
@@ -599,14 +701,16 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
 
     private fun updateConnectUi(connected: Boolean) {
         if (connected) {
-            tvConnectIcon.text = "⏹"
+            // Use vector drawable ic_stop — no emoji text
+            ivConnectIcon.setImageResource(R.drawable.ic_stop)
             tvConnectLabel.text = "DISCONNECT"
             btnConnectMain.background = getDrawable(R.drawable.bg_connect_button_disconnect)
             dotStatus.setBackgroundColor(0xFF00F2FE.toInt())
             tvStatus.text = "متصل — ${viewModel.selectedServer.value?.name ?: ""}"
             tvStatus.setTextColor(0xFF00F2FE.toInt())
         } else {
-            tvConnectIcon.text = "▶"
+            // Use vector drawable ic_play — no emoji text
+            ivConnectIcon.setImageResource(R.drawable.ic_play)
             tvConnectLabel.text = "CONNECT"
             btnConnectMain.background = getDrawable(R.drawable.bg_connect_button)
             dotStatus.setBackgroundColor(0xFFFF0055.toInt())
@@ -635,12 +739,12 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
 
             ImportResultDialog.newInstance(config) {
                 val db = LocalDatabase.get(this)
-                lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                lifecycleScope.launch(Dispatchers.IO) {
                     val expiresAt = System.currentTimeMillis() + config.expiresSeconds * 1000L
                     val encryptedUri = if (isLocked) {
                         CryptoHelper.encrypt(config.toProxyUri())
                     } else {
-                        config.toProxyUri()  // store plain for unlocked
+                        config.toProxyUri()
                     }
                     db.localServerDao().insert(
                         LocalServer(
@@ -651,7 +755,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
                             configJson   = if (!isLocked) config.toJson() else "",
                         )
                     )
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    withContext(Dispatchers.Main) {
                         viewModel.loadServers()
                         if (!config.customToast.isNullOrBlank()) {
                             Toast.makeText(this@MainActivity, config.customToast, Toast.LENGTH_LONG).show()

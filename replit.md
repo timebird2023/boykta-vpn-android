@@ -69,12 +69,20 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 ## Features Implemented
 
 - ✅ Dark neon UI: Obsidian (`#0B0E14`) + Cyan (`#00F2FE`) + Pink (`#FF0055`)
-- ✅ Main CONNECT/DISCONNECT toggle button with inline PING badge
-- ✅ Selected server card (protocol badge + `01d 12h:30m:15s` countdown)
+- ✅ Side Navigation Drawer (hamburger menu): Developer Channel, Import Config, Live Logs, Check Updates, Exit
+- ✅ Main CONNECT/DISCONNECT toggle — vector drawable icons (ic_play.xml / ic_stop.xml), NO emoji text
+- ✅ Selected server card: protocol badge + `01d 12h:30m:15s` countdown + 2-letter country code (no emoji flags)
 - ✅ Terminal-style LIVE LOG viewer (120 entries, color-coded)
+- ✅ Unlocked config panel: shows Target / Path / SNI / Host Header + Reconnect button
+- ✅ Locked config panel: shows only "كونفيغ مغلق" badge — no encryption jargon
 - ✅ VPN routing: TUN MTU 1500, DNS 8.8.8.8/1.1.1.1, route 0.0.0.0/0
 - ✅ TunBridge: Java TCP/UDP relay via SOCKS5 (no tun2socks native dep)
 - ✅ Multi-protocol: VLESS, Trojan, VMess, Shadowsocks
+- ✅ Trojan WS host-header override via `params["host"]` (CDN fronting support)
+- ✅ Internal Trojan WS+TLS diagnostic config in `app/src/debug/res/values/debug_config.xml` (DEBUG-only, never shipped to users)
+- ✅ Process lifecycle: `XrayManager.forceStop()` always called before start — prevents port 10808 conflicts
+- ✅ All network ops on `Dispatchers.IO` — UI thread stays clean
+- ✅ `builtInTestServers` compile-error fix in `MainViewModel.kt`
 - ✅ Locked export (AES-256-GCM) + Unlocked export (plain JSON)
 - ✅ Duration selector: seconds / minutes / hours / days
 - ✅ Custom on-connect toast/banner per config

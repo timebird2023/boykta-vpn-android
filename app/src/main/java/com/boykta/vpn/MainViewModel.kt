@@ -77,9 +77,9 @@ class MainViewModel @Inject constructor(
             .map { it.toServer() }
     }
 
-    /** Merged server list: local (top) + built-in test + remote */
+    /** Merged server list: local (top) + built-in test (DEBUG) + remote */
     val allServers: StateFlow<List<Server>> = combine(_localServers, _remoteServers) { local, remote ->
-        local + builtInTestServer + remote
+        local + builtInTestServers + remote
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val announcement  = MutableStateFlow<Announcement?>(null)

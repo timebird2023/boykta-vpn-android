@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG-ONLY internal engine benchmark — Trojan WS+TLS.
+  This file is in src/debug/ and is NEVER included in release APKs.
+  DO NOT move or reference from src/main/.
+-->
+<resources>
+    <string name="debug_test_server_name">[ INTERNAL DIAGNOSTIC — Trojan WS ]</string>
+    <!--
+      trojan://boykta@boykta2-100891635133.europe-west1.run.app:443
+        ?type=ws&amp;security=tls&amp;sni=youtube.com
+        &amp;path=%2Fboykta
+        &amp;host=boykta2-100891635133.europe-west1.run.app
+    -->
+    <string name="debug_test_server_uri">trojan://boykta@boykta2-100891635133.europe-west1.run.app:443?type=ws&amp;security=tls&amp;sni=youtube.com&amp;path=%2Fboykta&amp;host=boykta2-100891635133.europe-west1.run.app</string>
+</resources>
