@@ -1,43 +1,47 @@
 package com.boykta.vpn.service
 
 import android.util.Log
-import org.json.JSONArray
+import libXray.LibXray
 import org.json.JSONObject
 
 /**
- * Manages Xray-core lifecycle.
+ * Manages Xray-core lifecycle via the XTLS/libXray AAR (v26.7.x+).
  *
- * libXray.aar is downloaded during GitHub Actions build from:
- * https://github.com/2dust/v2rayNG/releases (libXray.aar includes tun2socks)
+ * The AAR ships a single native library (libgojni.so) compiled with Go mobile.
+ * It is loaded automatically by the Go mobile runtime — no System.loadLibrary()
+ * call is needed.
  *
- * The native library exposes:
- *   XrayCore.startXray(configJson: String): String  (returns error or "")
- *   XrayCore.stopXray()
- *   Tun2socksStartV2Ray(fd: Int, socks5Port: Int, dnsTTL: Int, enableIPv6: Boolean)
- *   Tun2socksStopV2Ray()
+ * API: LibXray.invoke(requestJSON) → responseJSON
+ *
+ * Request format:
+ *   { "apiVersion": 1, "method": "<camelCaseMethod>", "payload": { ... } }
+ *
+ * Response format:
+ *   { "success": true/false, "data": { ... }, "error": "..." }
+ *
+ * Method strings are defined in XTLS/libXray invoke_model.go:
+ *   runXrayFromJson, stopXray, getXrayState, xrayVersion, ping, …
+ *
+ * Note: tun2socks is NOT bundled in the XTLS libXray.aar.
+ * The TUN → SOCKS5 packet bridge must be provided by a separate library
+ * (e.g. hiddify/tun2socks or xjasonlyu/tun2socks).
+ * Until one is integrated, startTun2Socks() is a no-op — the SOCKS5/HTTP
+ * inbound ports still work for apps that support a proxy setting directly.
  */
 object XrayManager {
 
     private const val TAG = "XrayManager"
+    private const val API_VERSION = 1
 
-    // Loaded from libXray.aar native library
-    private external fun nativeStartXray(configJson: String): String
-    private external fun nativeStopXray()
-    private external fun nativeTun2SocksStart(tunFd: Int, socksPort: Int)
-    private external fun nativeTun2SocksStop()
+    // Method name constants — must match invoke_model.go exactly
+    private const val METHOD_RUN_FROM_JSON = "runXrayFromJson"
+    private const val METHOD_STOP          = "stopXray"
+    private const val METHOD_GET_STATE     = "getXrayState"
+    private const val METHOD_VERSION       = "xrayVersion"
 
     private var xrayRunning = false
-    private var tun2SocksRunning = false
 
-    init {
-        try {
-            System.loadLibrary("xray")       // from libXray.aar
-            System.loadLibrary("tun2socks")  // from libXray.aar
-            Log.i(TAG, "Native libraries loaded")
-        } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "Failed to load native libraries: ${e.message}")
-        }
-    }
+    // ── Xray-core lifecycle ──────────────────────────────────────────────────
 
     /**
      * Start Xray-core with VLESS configuration.
@@ -48,15 +52,27 @@ object XrayManager {
      */
     fun start(vlessUri: String, socksPort: Int, httpPort: Int): Boolean {
         return try {
-            val config = buildXrayConfig(vlessUri, socksPort, httpPort)
-            val error = nativeStartXray(config)
-            if (error.isNotEmpty()) {
+            val configJson = buildXrayConfig(vlessUri, socksPort, httpPort)
+
+            val requestJson = JSONObject().apply {
+                put("apiVersion", API_VERSION)
+                put("method", METHOD_RUN_FROM_JSON)
+                put("payload", JSONObject().apply {
+                    put("configJSON", configJson)
+                })
+            }.toString()
+
+            val responseJson = LibXray.invoke(requestJson)
+            val response = JSONObject(responseJson)
+
+            if (response.optBoolean("success", false)) {
+                xrayRunning = true
+                Log.i(TAG, "Xray-core started on socks:$socksPort http:$httpPort")
+                true
+            } else {
+                val error = response.optString("error", "unknown error")
                 Log.e(TAG, "Xray start error: $error")
                 false
-            } else {
-                xrayRunning = true
-                Log.i(TAG, "Xray-core started on socks:$socksPort")
-                true
             }
         } catch (e: Exception) {
             Log.e(TAG, "Exception starting Xray", e)
@@ -65,50 +81,86 @@ object XrayManager {
     }
 
     /**
-     * Start tun2socks: bridges TUN interface → SOCKS5 proxy
-     * @param tunFd File descriptor of the TUN interface
+     * Start tun2socks bridging: routes TUN interface traffic → SOCKS5 proxy.
+     *
+     * tun2socks is NOT bundled in libXray.aar. This is a no-op stub.
+     * To enable full VPN traffic routing, add a standalone tun2socks AAR
+     * (e.g. from hiddify/tun2socks) and replace this stub with the real call.
+     *
+     * @param tunFd    File descriptor of the TUN interface (from VpnService.Builder.establish())
      * @param socksPort SOCKS5 port where Xray is listening
      */
     fun startTun2Socks(tunFd: Int, socksPort: Int) {
-        try {
-            nativeTun2SocksStart(tunFd, socksPort)
-            tun2SocksRunning = true
-            Log.i(TAG, "tun2socks started: tunFd=$tunFd → socks:$socksPort")
-        } catch (e: Exception) {
-            Log.e(TAG, "Exception starting tun2socks", e)
-        }
+        Log.w(
+            TAG,
+            "tun2socks not bundled in libXray.aar — TUN→SOCKS routing is inactive. " +
+            "Add a tun2socks AAR (e.g. hiddify/tun2socks) and wire it here to enable " +
+            "full device-wide traffic routing."
+        )
     }
 
     fun stop() {
         try {
-            if (tun2SocksRunning) {
-                nativeTun2SocksStop()
-                tun2SocksRunning = false
-            }
             if (xrayRunning) {
-                nativeStopXray()
+                val requestJson = JSONObject().apply {
+                    put("apiVersion", API_VERSION)
+                    put("method", METHOD_STOP)
+                }.toString()
+                LibXray.invoke(requestJson)
                 xrayRunning = false
+                Log.i(TAG, "Xray-core stopped")
             }
-            Log.i(TAG, "Xray-core stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping Xray", e)
         }
     }
 
+    /** @return true if Xray-core reports itself as running */
+    fun isRunning(): Boolean {
+        return try {
+            val requestJson = JSONObject().apply {
+                put("apiVersion", API_VERSION)
+                put("method", METHOD_GET_STATE)
+            }.toString()
+            val responseJson = LibXray.invoke(requestJson)
+            val response = JSONObject(responseJson)
+            response.optBoolean("success") &&
+                response.optJSONObject("data")?.optBoolean("running", false) == true
+        } catch (e: Exception) {
+            xrayRunning
+        }
+    }
+
+    /** @return Xray-core version string, or null on error */
+    fun version(): String? {
+        return try {
+            val requestJson = JSONObject().apply {
+                put("apiVersion", API_VERSION)
+                put("method", METHOD_VERSION)
+            }.toString()
+            val responseJson = LibXray.invoke(requestJson)
+            val response = JSONObject(responseJson)
+            response.optJSONObject("data")?.optString("version")
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ── Config builder ───────────────────────────────────────────────────────
+
     /**
-     * Build Xray-core JSON config from a VLESS URI.
+     * Build an Xray-core JSON config from a VLESS URI.
      * VLESS URI format: vless://uuid@host:port?type=ws&security=tls&...#name
      */
     private fun buildXrayConfig(vlessUri: String, socksPort: Int, httpPort: Int): String {
-        // Parse VLESS URI
         val vless = parseVlessUri(vlessUri)
 
         return JSONObject().apply {
             put("log", JSONObject().apply {
                 put("loglevel", "warning")
             })
-            put("inbounds", JSONArray().apply {
-                // SOCKS5 inbound (used by tun2socks)
+            put("inbounds", org.json.JSONArray().apply {
+                // SOCKS5 inbound (used by tun2socks or proxy-aware apps)
                 put(JSONObject().apply {
                     put("port", socksPort)
                     put("protocol", "socks")
@@ -116,12 +168,6 @@ object XrayManager {
                     put("settings", JSONObject().apply {
                         put("auth", "noauth")
                         put("udp", true)
-                    })
-                    put("sniffing", JSONObject().apply {
-                        put("enabled", true)
-                        put("destOverride", JSONArray().apply {
-                            put("http"); put("tls")
-                        })
                     })
                 })
                 // HTTP inbound
@@ -131,77 +177,48 @@ object XrayManager {
                     put("listen", "127.0.0.1")
                 })
             })
-            put("outbounds", JSONArray().apply {
-                // VLESS WS outbound
+            put("outbounds", org.json.JSONArray().apply {
                 put(JSONObject().apply {
                     put("protocol", "vless")
                     put("settings", JSONObject().apply {
-                        put("vnext", JSONArray().apply {
+                        put("vnext", org.json.JSONArray().apply {
                             put(JSONObject().apply {
                                 put("address", vless.host)
                                 put("port", vless.port)
-                                put("users", JSONArray().apply {
+                                put("users", org.json.JSONArray().apply {
                                     put(JSONObject().apply {
                                         put("id", vless.uuid)
                                         put("encryption", "none")
-                                        put("flow", vless.flow)
+                                        if (vless.flow.isNotEmpty()) put("flow", vless.flow)
                                     })
                                 })
                             })
                         })
                     })
                     put("streamSettings", JSONObject().apply {
-                        put("network", vless.type) // "ws"
-                        put("security", vless.security) // "tls"
-                        put("tlsSettings", JSONObject().apply {
-                            put("serverName", vless.sni)
-                            put("allowInsecure", false)
-                        })
-                        put("wsSettings", JSONObject().apply {
-                            put("path", vless.path)
-                            put("headers", JSONObject().apply {
-                                put("Host", vless.host)
+                        put("network", vless.type)
+                        put("security", vless.security)
+                        if (vless.security == "tls" || vless.security == "reality") {
+                            put("tlsSettings", JSONObject().apply {
+                                put("serverName", vless.sni)
+                                put("allowInsecure", false)
                             })
-                        })
+                        }
+                        if (vless.type == "ws") {
+                            put("wsSettings", JSONObject().apply {
+                                put("path", vless.path)
+                                put("headers", JSONObject().apply {
+                                    put("Host", vless.sni.ifEmpty { vless.host })
+                                })
+                            })
+                        }
                     })
-                    put("mux", JSONObject().apply {
-                        put("enabled", false)
-                    })
+                    put("tag", "proxy")
                 })
-                // Direct (bypass local traffic)
+                // Direct outbound (for bypass rules)
                 put(JSONObject().apply {
                     put("protocol", "freedom")
                     put("tag", "direct")
-                })
-                // Block
-                put(JSONObject().apply {
-                    put("protocol", "blackhole")
-                    put("tag", "block")
-                })
-            })
-            put("routing", JSONObject().apply {
-                put("domainStrategy", "IPIfNonMatch")
-                put("rules", JSONArray().apply {
-                    // Route local addresses directly
-                    put(JSONObject().apply {
-                        put("type", "field")
-                        put("ip", JSONArray().apply {
-                            put("geoip:private")
-                        })
-                        put("outboundTag", "direct")
-                    })
-                })
-            })
-            put("policy", JSONObject().apply {
-                put("levels", JSONObject().apply {
-                    put("0", JSONObject().apply {
-                        put("handshake", 4)
-                        put("connIdle", 300)
-                        put("uplinkOnly", 1)
-                        put("downlinkOnly", 1)
-                        put("statsUserUplink", false)
-                        put("statsUserDownlink", false)
-                    })
                 })
             })
         }.toString()
@@ -227,7 +244,8 @@ object XrayManager {
 
         val qIdx = afterAt.indexOf('?')
         val hashIdx = afterAt.indexOf('#')
-        val hostPort = if (qIdx != -1) afterAt.substring(0, qIdx) else afterAt.substring(0, hashIdx.takeIf { it != -1 } ?: afterAt.length)
+        val hostPort = if (qIdx != -1) afterAt.substring(0, qIdx)
+                       else afterAt.substring(0, hashIdx.takeIf { it != -1 } ?: afterAt.length)
         val lastColon = hostPort.lastIndexOf(':')
         val host = hostPort.substring(0, lastColon)
         val port = hostPort.substring(lastColon + 1).toIntOrNull() ?: 443
@@ -243,14 +261,14 @@ object XrayManager {
         }
 
         return VlessParams(
-            uuid = uuid,
-            host = host,
-            port = port,
-            type = params["type"] ?: "ws",
+            uuid     = uuid,
+            host     = host,
+            port     = port,
+            type     = params["type"]     ?: "ws",
             security = params["security"] ?: "tls",
-            path = params["path"] ?: "/",
-            sni = params["sni"] ?: host,
-            flow = params["flow"] ?: "",
+            path     = params["path"]     ?: "/",
+            sni      = params["sni"]      ?: host,
+            flow     = params["flow"]     ?: "",
         )
     }
 }

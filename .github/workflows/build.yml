@@ -30,17 +30,20 @@ jobs:
         # NOTE: Do NOT run `gradle wrapper --gradle-version X` here.
         # That overwrites the committed wrapper (8.11.1) with an older version.
 
-      - name: Download libXray.aar
+      # libXray.aar is committed at app/libs/libXray.aar (from XTLS/libXray releases).
+      # This step refreshes it to the latest XTLS release on every CI run so the
+      # committed copy never goes stale. Remove this step to use the committed file as-is.
+      - name: Refresh libXray.aar from XTLS/libXray latest release
         run: |
           mkdir -p app/libs
-          LATEST=$(curl -sS https://api.github.com/repos/2dust/v2rayNG/releases/latest \
+          LATEST=$(curl -sS https://api.github.com/repos/XTLS/libXray/releases/latest \
             | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "Fetching libXray.aar from v2rayNG $LATEST"
-          curl -fL "https://github.com/2dust/v2rayNG/releases/download/${LATEST}/libXray.aar" \
-            -o app/libs/libXray.aar \
-          || curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" \
-            -o app/libs/libXray.aar
-          ls -lh app/libs/
+          echo "Downloading libXray.aar from XTLS/libXray $LATEST"
+          curl -fL \
+            "https://github.com/XTLS/libXray/releases/download/${LATEST}/libxray-android.zip" \
+            -o /tmp/libxray-android.zip
+          unzip -j /tmp/libxray-android.zip "libxray-android/libXray.aar" -d app/libs/
+          ls -lh app/libs/libXray.aar
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
@@ -60,7 +63,9 @@ jobs:
           STORE_PASSWORD:  ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS:       ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD:    ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --stacktrace
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > /tmp/release.keystore
+          KEYSTORE_FILE=/tmp/release.keystore ./gradlew assembleRelease --stacktrace
 
       - name: Upload Release APK
         if: env.KEYSTORE_BASE64 != ''
