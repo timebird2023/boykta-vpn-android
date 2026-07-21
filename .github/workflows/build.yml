@@ -33,7 +33,7 @@ jobs:
 
       - name: Generate Gradle Wrapper & Make executable
         run: |
-          gradle wrapper
+          gradle wrapper --gradle-version 8.7
           chmod +x ./gradlew
 
       - name: Build Debug APK
