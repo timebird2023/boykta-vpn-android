@@ -26,15 +26,9 @@ jobs:
       - name: Download libXray.aar (from v2rayNG)
         run: |
           mkdir -p app/libs
-          # Download the latest libXray.aar that includes tun2socks
-          LIBXRAY_VERSION=$(curl -s https://api.github.com/repos/2dust/v2rayNG/releases/latest | grep tag_name | cut -d '"' -f4)
+          LIBXRAY_VERSION=$(curl -s https://api.github.com/repos/2dust/v2rayNG/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
           echo "Using v2rayNG version: $LIBXRAY_VERSION"
-          # Download libxray from v2rayNG's release
-          curl -L "https://github.com/2dust/v2rayNG/releases/download/${LIBXRAY_VERSION}/libXray.aar" \
-            -o app/libs/libXray.aar 2>/dev/null || \
-          # Fallback: download from a specific known version
-          curl -L "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" \
-            -o app/libs/libXray.aar
+          curl -L "https://github.com/2dust/v2rayNG/releases/download/${LIBXRAY_VERSION}/libXray.aar" -o app/libs/libXray.aar || curl -L "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" -o app/libs/libXray.aar
           ls -lh app/libs/
 
       - name: Make gradlew executable
@@ -43,10 +37,9 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug
 
-      - name: Build Release APK (unsigned — for signed see below)
+      - name: Build Release APK (unsigned)
         run: ./gradlew assembleRelease
         env:
-          # Optional: set these secrets in GitHub repo settings for signed release
           KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -67,21 +60,3 @@ jobs:
           path: app/build/outputs/apk/release/app-release*.apk
           retention-days: 30
         continue-on-error: true
-
-  # Optional: create a GitHub release when you push a tag
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Download APK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: boykta-vpn-debug
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: app-debug.apk
-          name: "Boykta VPN ${{ github.ref_name }}"
-          body: "تحديث تلقائي — ${{ github.ref_name }}"
