@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -26,21 +28,25 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
-        # NOTE: Do NOT run `gradle wrapper --gradle-version X` here.
-        # That overwrites the committed wrapper (8.11.1) with an older version.
+        run: |
+          chmod +x ./gradlew
+          # NOTE: Do NOT run `gradle wrapper --gradle-version X` here.
+          # That overwrites the committed wrapper (8.11.1) with an older version.
 
-      - name: Download libXray.aar
+      - name: Verify or Download libXray.aar
         run: |
           mkdir -p app/libs
-          LATEST=$(curl -sS https://api.github.com/repos/2dust/v2rayNG/releases/latest \
-            | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "Fetching libXray.aar from v2rayNG $LATEST"
-          curl -fL "https://github.com/2dust/v2rayNG/releases/download/${LATEST}/libXray.aar" \
-            -o app/libs/libXray.aar \
-          || curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" \
-            -o app/libs/libXray.aar
-          ls -lh app/libs/
+          if [ -f "app/libs/libXray.aar" ] && [ $(stat -c%s "app/libs/libXray.aar") -gt 1000000 ]; then
+            echo "libXray.aar exists in repo and is valid!"
+            ls -lh app/libs/libXray.aar
+          else
+            echo "Downloading libXray.aar from XTLS releases..."
+            LATEST=$(curl -sS https://api.github.com/repos/XTLS/libXray/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            curl -fL "https://github.com/XTLS/libXray/releases/download/${LATEST}/libxray-android.zip" -o /tmp/libxray-android.zip \
+            && unzip -o -j /tmp/libxray-android.zip "libxray-android/libXray.aar" -d app/libs/ \
+            || curl -fL "https://github.com/XTLS/libXray/releases/download/v24.12.31/libXray.aar" -o app/libs/libXray.aar
+            ls -lh app/libs/
+          fi
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
