@@ -87,12 +87,10 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     private lateinit var tvUnlockedHostHeader: TextView
     private lateinit var btnReconnect: View
 
-    // Bottom bar buttons
+    // Bottom bar buttons (Telegram + Exit moved to drawer)
     private lateinit var btnBarUpdate: View
     private lateinit var btnBarLogs: View
     private lateinit var btnBarKey: View
-    private lateinit var btnBarTelegram: View
-    private lateinit var btnBarExit: View
 
     // Log terminal
     private lateinit var cardLogTerminal: View
@@ -230,8 +228,6 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         btnBarUpdate      = findViewById(R.id.btnBarUpdate)
         btnBarLogs        = findViewById(R.id.btnBarLogs)
         btnBarKey         = findViewById(R.id.btnBarKey)
-        btnBarTelegram    = findViewById(R.id.btnBarTelegram)
-        btnBarExit        = findViewById(R.id.btnBarExit)
 
         cardLogTerminal   = findViewById(R.id.cardLogTerminal)
         rvLogs            = findViewById(R.id.rvLogs)
@@ -350,16 +346,6 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
                 requestVpnPermissionAndConnect(server)
             }
             dialog.show(supportFragmentManager, "config_export")
-        }
-
-        btnBarTelegram.setOnClickListener {
-            val url = getString(R.string.telegram_channel_url)
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        }
-
-        btnBarExit.setOnClickListener {
-            if (isVpnConnected) disconnectVpn()
-            finishAndRemoveTask()
         }
 
         // Close log terminal

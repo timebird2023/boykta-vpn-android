@@ -27,7 +27,14 @@ object CryptoHelper {
      * @return Plaintext UTF-8 string
      */
     fun decrypt(encoded: String): String {
-        val raw = Base64.decode(encoded.trim(), Base64.DEFAULT)
+        val sanitized = encoded.trim()
+            .replace('-', '+')
+            .replace('_', '/')
+            .let { s ->
+                val pad = (4 - s.length % 4) % 4
+                if (pad > 0) s + "=".repeat(pad) else s
+            }
+        val raw = Base64.decode(sanitized, Base64.NO_WRAP)
         require(raw.size > 12) { "Invalid ciphertext length" }
 
         val iv = raw.copyOfRange(0, 12)

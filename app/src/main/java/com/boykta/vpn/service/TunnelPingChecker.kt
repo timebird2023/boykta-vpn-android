@@ -30,8 +30,8 @@ object TunnelPingChecker {
 
     private val ts get() = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
 
-    private const val PING_URL_PRIMARY  = "http://connectivitycheck.gstatic.com/generate_204"
-    private const val PING_URL_FALLBACK = "http://www.gstatic.com/generate_204"
+    private const val PING_URL_PRIMARY  = "https://connectivitycheck.gstatic.com/generate_204"
+    private const val PING_URL_FALLBACK = "https://www.gstatic.com/generate_204"
     private const val TIMEOUT_MS = 8_000
 
     // ── Device info ───────────────────────────────────────────────────────────

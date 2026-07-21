@@ -298,10 +298,16 @@ object XrayManager {
 
     // ── VMess outbound ────────────────────────────────────────────────────────
 
+    private fun sanitizeBase64(input: String): String {
+        val s = input.trim().replace('-', '+').replace('_', '/')
+        val pad = (4 - s.length % 4) % 4
+        return if (pad > 0) s + "=".repeat(pad) else s
+    }
+
     private fun buildVmessOutbound(uri: String): JSONObject {
         val base64 = uri.removePrefix("vmess://")
         val json = try {
-            val decoded = String(android.util.Base64.decode(base64, android.util.Base64.DEFAULT))
+            val decoded = String(android.util.Base64.decode(sanitizeBase64(base64), android.util.Base64.NO_WRAP))
             JSONObject(decoded)
         } catch (e: Exception) {
             VpnLogManager.error("VMess parse error: ${e.message}")
@@ -348,7 +354,7 @@ object XrayManager {
         val atIdx = main.lastIndexOf('@')
         val userInfoB64 = main.substring(0, atIdx)
         val hostPort = main.substring(atIdx + 1)
-        val userInfo = String(android.util.Base64.decode(userInfoB64, android.util.Base64.DEFAULT))
+        val userInfo = String(android.util.Base64.decode(sanitizeBase64(userInfoB64), android.util.Base64.NO_WRAP))
         val colonIdx = userInfo.indexOf(':')
         val method = userInfo.substring(0, colonIdx)
         val password = userInfo.substring(colonIdx + 1)

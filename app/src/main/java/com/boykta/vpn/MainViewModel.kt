@@ -134,7 +134,7 @@ class MainViewModel @Inject constructor(
                     lastNotifId = notif.id
                     Toast.makeText(
                         getApplication(),
-                        "🔔 ${notif.title}: ${notif.message}",
+                        "[!] ${notif.title}: ${notif.message}",
                         Toast.LENGTH_LONG
                     ).show()
                 }
