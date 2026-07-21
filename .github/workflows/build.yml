@@ -25,18 +25,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+      - name: Generate Gradle Wrapper & Make executable
+        run: |
+          gradle wrapper --gradle-version 8.7
+          chmod +x ./gradlew
 
-      - name: Check libXray.aar
+      - name: Download libXray.aar
         run: |
           mkdir -p app/libs
-          if [ -f "app/libs/libXray.aar" ]; then
-            echo "libXray.aar exists locally!"
-          else
-            echo "Downloading fallback libXray.aar..."
-            curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.8.3/libXray.aar" -o app/libs/libXray.aar || echo "Download skipped, building anyway"
-          fi
+          curl -fL "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" -o app/libs/libXray.aar
           ls -lh app/libs/
 
       - name: Build Debug APK
