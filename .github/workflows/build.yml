@@ -31,15 +31,20 @@ jobs:
           curl -L "https://github.com/2dust/v2rayNG/releases/download/${LIBXRAY_VERSION}/libXray.aar" -o app/libs/libXray.aar || curl -L "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" -o app/libs/libXray.aar
           ls -lh app/libs/
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+      - name: Generate Gradle Wrapper & Make executable
+        run: |
+          cd android-app
+          gradle wrapper
+          chmod +x ./gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        run: |
+          cd android-app
+          ./gradlew assembleDebug
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: boykta-vpn-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
