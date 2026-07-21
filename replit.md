@@ -1,6 +1,6 @@
 # Boykta VPN — Android App
 
-Native Android VPN app using Xray-core (VLESS WS) with a Telegram-bot-managed server list.
+Native Android VPN app using Xray-core (VLESS / Trojan / VMess / Shadowsocks) with a dark neon UI, real-time log terminal, and Telegram-bot-managed server list.
 
 ## Stack
 
@@ -9,7 +9,7 @@ Native Android VPN app using Xray-core (VLESS WS) with a Telegram-bot-managed se
 - **DI**: Hilt
 - **Networking**: Retrofit + OkHttp (AES-256-GCM encrypted API)
 - **Database**: Room (local imported configs)
-- **VPN Engine**: libXray.aar (Xray-core + tun2socks) — JNI native libs
+- **VPN Engine**: libXray.aar (Xray-core JNI) + Java TunBridge (TUN→SOCKS5)
 - **Build**: Gradle 8.11.1 + AGP 8.8.0 + Kotlin 2.0.21
 
 ## How to Build
@@ -17,49 +17,76 @@ Native Android VPN app using Xray-core (VLESS WS) with a Telegram-bot-managed se
 ### On Replit (debug APK)
 
 ```bash
-export ANDROID_HOME=~/android-sdk
-export ANDROID_SDK_ROOT=~/android-sdk
 export JAVA_HOME=/nix/store/xad649j61kwkh0id5wvyiab5rliprp4d-openjdk-17.0.15+6/lib/openjdk
-export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
-
-./gradlew assembleDebug -Pandroid.sdk.root=$ANDROID_HOME
+./gradlew assembleDebug
 ```
 
 **Output**: `app/build/outputs/apk/debug/app-debug.apk`
 
+> **Note**: After a container restart the Android SDK must be reinstalled:
+> ```bash
+> mkdir -p ~/android-sdk/cmdline-tools
+> curl -s -o ct.zip "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+> unzip -q ct.zip -d ~/android-sdk/cmdline-tools && mv ~/android-sdk/cmdline-tools/cmdline-tools ~/android-sdk/cmdline-tools/latest && rm ct.zip
+> yes | ~/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=~/android-sdk --licenses > /dev/null
+> yes | ~/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=~/android-sdk "platforms;android-35" "build-tools;35.0.1" "platform-tools"
+> echo "sdk.dir=$HOME/android-sdk" > local.properties
+> ```
+
 ### Via GitHub Actions (recommended for release)
 
-Push to GitHub — the `.github/workflows/build.yml` workflow triggers automatically and uploads the APK as an artifact. See README.md for full steps.
+Push to GitHub — the `.github/workflows/build.yml` workflow triggers automatically and uploads the APK as an artifact.
 
-## Build Environment (Replit)
-
-- **JDK 17**: installed via Nix (`jdk17`)
-- **Android SDK**: `~/android-sdk/` — platforms/android-35, build-tools/35.0.1
-- **Gradle wrapper JAR**: `gradle/wrapper/gradle-wrapper.jar` (downloaded from Gradle releases — not committed in original repo)
-- **libXray.aar**: NOT present — JNI symbols resolve at runtime. VPN engine will fail at runtime without the native `.so` files. Download from v2rayNG releases and place in `app/libs/` to enable actual VPN functionality.
-
-## Key Architecture
+## Architecture
 
 ```
-MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI)
-                                                       ↓
-                                               libXray.aar (.so files)
-                                               xray-core + tun2socks
+MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXray.aar)
+                                      ↓
+                               TunBridge (Java TUN→SOCKS5 relay)
+                                      ↓
+                         127.0.0.1:10808 (SOCKS5) / :10809 (HTTP)
 ```
 
+- `VpnLogManager` — SharedFlow bus; all pipeline events stream to the in-app log terminal
 - API responses are AES-256-GCM encrypted (`CryptoHelper.kt`)
-- `.boykta` config files: encrypted at rest in Room DB (`LocalServer.kt`)
-- VLESS URIs never exposed in UI — only server names
+- `.boykta` config files: locked (AES-GCM) or unlocked (plain JSON)
+- VLESS URIs / proxy credentials never exposed in UI
 - `SecurityChecker.kt` blocks known packet sniffers
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `service/BoykVpnService.kt` | VPN lifecycle, TUN setup (MTU 1500, DNS 8.8.8.8/1.1.1.1, 0.0.0.0/0 route) |
+| `service/TunBridge.kt` | Pure-Java TUN→SOCKS5 packet relay (TCP + UDP) |
+| `service/XrayManager.kt` | Xray-core wrapper — VLESS, Trojan, VMess, Shadowsocks |
+| `service/VpnLogManager.kt` | SharedFlow log bus (replays 120 entries) |
+| `ui/LogAdapter.kt` | Terminal-style log RecyclerView adapter |
+| `config/BoykConfig.kt` | Config model: locked/unlocked, custom toast, duration units |
+| `config/BoykConfigManager.kt` | Export (locked AES / unlocked JSON) + import |
+| `ui/ConfigExportDialog.kt` | Admin export form with all protocol fields |
 
 ## Features Implemented
 
-- ✅ Server list with live countdown timers
-- ✅ LatencyChecker (`util/LatencyChecker.kt`) — measures ping to `https://dns.google`
-- ✅ `.boykta` config file import/export (AES-256-GCM encrypted)
-- ✅ Ad dialog with 15-second countdown before connect
-- ✅ Sniffer/proxy detection
-- ✅ Room DB for locally imported servers
+- ✅ Dark neon UI: Obsidian (`#0B0E14`) + Cyan (`#00F2FE`) + Pink (`#FF0055`)
+- ✅ Main CONNECT/DISCONNECT toggle button with inline PING badge
+- ✅ Selected server card (protocol badge + `01d 12h:30m:15s` countdown)
+- ✅ Terminal-style LIVE LOG viewer (120 entries, color-coded)
+- ✅ VPN routing: TUN MTU 1500, DNS 8.8.8.8/1.1.1.1, route 0.0.0.0/0
+- ✅ TunBridge: Java TCP/UDP relay via SOCKS5 (no tun2socks native dep)
+- ✅ Multi-protocol: VLESS, Trojan, VMess, Shadowsocks
+- ✅ Locked export (AES-256-GCM) + Unlocked export (plain JSON)
+- ✅ Duration selector: seconds / minutes / hours / days
+- ✅ Custom on-connect toast/banner per config
+- ✅ Remote announcement banner polling
+- ✅ Telegram-bot-compatible JSON payload structure
+
+## Build Environment (Replit)
+
+- **JDK 17**: `jdk17` via Nix
+- **Android SDK**: `~/android-sdk/` — platforms/android-35, build-tools/35.0.1
+- **local.properties**: `sdk.dir=/home/runner/android-sdk`
+- **libXray.aar**: NOT present — VPN engine starts Xray inbounds but TUN→SOCKS5 bridge requires the .aar for native routing. Place in `app/libs/` to enable full device-wide VPN.
 
 ## User Preferences
 

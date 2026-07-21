@@ -33,4 +33,5 @@ fun LocalServer.toServer(): Server = Server(
     config = "", // never exposed; MainViewModel fetches encrypted URI separately
     expiresAt = sdf.format(Date(expiresAt)),
     isActive = System.currentTimeMillis() < expiresAt,
+    protocol = "local",   // resolved from BoykConfig at connect time
 )

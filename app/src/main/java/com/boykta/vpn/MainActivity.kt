@@ -22,15 +22,17 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.boykta.vpn.config.BoykConfig
 import com.boykta.vpn.config.BoykConfigManager
 import com.boykta.vpn.model.Server
 import com.boykta.vpn.model.Announcement
+import com.boykta.vpn.model.formattedRemaining
 import com.boykta.vpn.model.isExpired
+import com.boykta.vpn.model.protocolLabel
 import com.boykta.vpn.service.BoykVpnService
 import com.boykta.vpn.ui.AdDialog
 import com.boykta.vpn.ui.ConfigExportDialog
 import com.boykta.vpn.ui.ImportResultDialog
+import com.boykta.vpn.ui.LogAdapter
 import com.boykta.vpn.ui.ServerAdapter
 import com.boykta.vpn.util.SecurityChecker
 import com.google.android.material.button.MaterialButton
@@ -45,7 +47,7 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
 
     private val viewModel: MainViewModel by viewModels()
 
-    // Views
+    // ── Views ──────────────────────────────────────────────────────────────────
     private lateinit var rvServers: RecyclerView
     private lateinit var btnUpdate: MaterialButton
     private lateinit var btnImport: MaterialButton
@@ -54,11 +56,27 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
     private lateinit var layoutEmpty: View
     private lateinit var fabExport: FloatingActionButton
 
+    // Connect/Disconnect panel
+    private lateinit var btnConnectMain: MaterialButton
+    private lateinit var tvPingBadge: TextView
+    private lateinit var tvPingLabel: TextView
+
+    // Selected server card
+    private lateinit var cardSelectedServer: View
+    private lateinit var tvSelectedName: TextView
+    private lateinit var tvProtocolBadge: TextView
+    private lateinit var tvSelectedCountdown: TextView
+
+    // Log terminal
+    private lateinit var rvLogs: RecyclerView
+    private lateinit var logAdapter: LogAdapter
+
     private lateinit var adapter: ServerAdapter
 
     // VPN service binding
     private var vpnService: BoykVpnService? = null
     private var serviceBound = false
+    private var isVpnConnected = false
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -72,7 +90,6 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
         }
     }
 
-    // VPN permission launcher
     private val vpnPermLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -84,20 +101,17 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
         pendingServer = null
     }
 
-    // File picker for import
     private val importFileLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let { handleImportUri(it) }
-    }
+    ) { uri -> uri?.let { handleImportUri(it) } }
 
-    // Storage permission launcher (Android < 13)
     private val storagePermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* result handled in requestExportWithPermission */ }
+    ) { /* handled in requestExportWithPermission */ }
 
     private var pendingServer: Server? = null
     private var pendingAnnouncement: Announcement? = null
+    private var selectedCountdownJob: Job? = null
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -112,13 +126,13 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
 
         initViews()
         setupRecyclerView()
+        setupLogTerminal()
         observeViewModel()
         bindVpnService()
         viewModel.loadServers()
         viewModel.loadAnnouncement()
+        viewModel.measurePing()
         startNotificationPolling()
-
-        // Handle .boykta file opened from external app (Telegram, Files, etc.)
         handleIncomingIntent(intent)
     }
 
@@ -127,31 +141,49 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
         handleIncomingIntent(intent)
     }
 
-    // ── Views ──────────────────────────────────────────────────────────────────
+    // ── View Init ─────────────────────────────────────────────────────────────
 
     private fun initViews() {
-        rvServers  = findViewById(R.id.rvServers)
-        btnUpdate  = findViewById(R.id.btnUpdate)
-        tvStatus   = findViewById(R.id.tvStatus)
-        dotStatus  = findViewById(R.id.dotStatus)
-        layoutEmpty = findViewById(R.id.layoutEmpty)
-        btnImport  = findViewById(R.id.btnImport)
-        fabExport  = findViewById(R.id.fabExport)
+        rvServers          = findViewById(R.id.rvServers)
+        btnUpdate          = findViewById(R.id.btnUpdate)
+        tvStatus           = findViewById(R.id.tvStatus)
+        dotStatus          = findViewById(R.id.dotStatus)
+        layoutEmpty        = findViewById(R.id.layoutEmpty)
+        btnImport          = findViewById(R.id.btnImport)
+        fabExport          = findViewById(R.id.fabExport)
+        btnConnectMain     = findViewById(R.id.btnConnectMain)
+        tvPingBadge        = findViewById(R.id.tvPingBadge)
+        tvPingLabel        = findViewById(R.id.tvPingLabel)
+        cardSelectedServer = findViewById(R.id.cardSelectedServer)
+        tvSelectedName     = findViewById(R.id.tvSelectedName)
+        tvProtocolBadge    = findViewById(R.id.tvProtocolBadge)
+        tvSelectedCountdown = findViewById(R.id.tvSelectedCountdown)
+        rvLogs             = findViewById(R.id.rvLogs)
 
         btnUpdate.setOnClickListener {
             viewModel.loadServers()
             viewModel.loadAnnouncement()
+            viewModel.measurePing()
         }
 
-        // Import: open file picker
-        btnImport.setOnClickListener {
-            importFileLauncher.launch("*/*")
-        }
+        btnImport.setOnClickListener { importFileLauncher.launch("*/*") }
 
-        // Export FAB: admin-mode form
         fabExport.setOnClickListener {
-            ConfigExportDialog.newInstance()
-                .show(supportFragmentManager, "export_dialog")
+            ConfigExportDialog.newInstance().show(supportFragmentManager, "export_dialog")
+        }
+
+        tvPingBadge.setOnClickListener { viewModel.measurePing() }
+        tvPingLabel.setOnClickListener { viewModel.measurePing() }
+
+        // Main connect/disconnect toggle
+        btnConnectMain.setOnClickListener {
+            if (isVpnConnected) {
+                onDisconnect()
+            } else {
+                viewModel.selectedServer.value?.let { server ->
+                    onConnect(server)
+                } ?: showSnack("اختر سيرفراً من القائمة أولاً")
+            }
         }
     }
 
@@ -161,18 +193,30 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
         rvServers.adapter = adapter
     }
 
+    private fun setupLogTerminal() {
+        logAdapter = LogAdapter()
+        rvLogs.layoutManager = LinearLayoutManager(this).also { it.stackFromEnd = true }
+        rvLogs.adapter = logAdapter
+    }
+
+    // ── Observe ────────────────────────────────────────────────────────────────
+
     private fun observeViewModel() {
         lifecycleScope.launch {
             viewModel.allServers.collectLatest { servers ->
                 adapter.submitList(servers)
                 layoutEmpty.visibility = if (servers.isEmpty()) View.VISIBLE else View.GONE
                 rvServers.visibility   = if (servers.isEmpty()) View.GONE  else View.VISIBLE
+                // Auto-select first active server if none selected
+                if (viewModel.selectedServer.value == null && servers.isNotEmpty()) {
+                    viewModel.selectServer(servers.first())
+                }
             }
         }
         lifecycleScope.launch {
             viewModel.isLoading.collectLatest { loading ->
                 btnUpdate.isEnabled = !loading
-                btnUpdate.text = if (loading) "جارٍ التحميل…" else getString(R.string.update)
+                btnUpdate.text = if (loading) "جارِ التحميل…" else getString(R.string.update)
             }
         }
         lifecycleScope.launch {
@@ -181,22 +225,62 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
         lifecycleScope.launch {
             viewModel.announcement.collectLatest { pendingAnnouncement = it }
         }
+        lifecycleScope.launch {
+            viewModel.pingMs.collectLatest { ms ->
+                when {
+                    ms == null -> { tvPingBadge.text = "…ms"; tvPingBadge.setTextColor(0xFF888888.toInt()) }
+                    ms < 0L   -> { tvPingBadge.text = "timeout"; tvPingBadge.setTextColor(0xFFFF4444.toInt()) }
+                    ms < 100L -> { tvPingBadge.text = "${ms}ms"; tvPingBadge.setTextColor(0xFF00F2FE.toInt()) }
+                    ms < 250L -> { tvPingBadge.text = "${ms}ms"; tvPingBadge.setTextColor(0xFFFFCC00.toInt()) }
+                    else      -> { tvPingBadge.text = "${ms}ms"; tvPingBadge.setTextColor(0xFFFF4444.toInt()) }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            viewModel.selectedServer.collectLatest { server ->
+                updateSelectedServerCard(server)
+            }
+        }
+        lifecycleScope.launch {
+            viewModel.vpnLogs.collect { line ->
+                logAdapter.addLine(line)
+                rvLogs.scrollToPosition(logAdapter.itemCount - 1)
+            }
+        }
     }
 
-    // ── .boykta Intent handling ────────────────────────────────────────────────
+    // ── Selected server card ───────────────────────────────────────────────────
+
+    private fun updateSelectedServerCard(server: Server?) {
+        if (server == null) {
+            cardSelectedServer.visibility = View.GONE
+            return
+        }
+        cardSelectedServer.visibility = View.VISIBLE
+        tvSelectedName.text = server.name
+        tvProtocolBadge.text = server.protocolLabel()
+
+        // Countdown ticker
+        selectedCountdownJob?.cancel()
+        selectedCountdownJob = lifecycleScope.launch {
+            while (isActive) {
+                tvSelectedCountdown.text = server.formattedRemaining()
+                delay(1_000)
+            }
+        }
+    }
+
+    // ── .boykta Intent handling ───────────────────────────────────────────────
 
     private fun handleIncomingIntent(intent: Intent?) {
         intent ?: return
         if (intent.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
-
-        // Validate extension when available
         val uriStr = uri.toString()
         val lastSegment = uri.lastPathSegment ?: ""
         if (!uriStr.endsWith(".boykta", ignoreCase = true) &&
             !lastSegment.endsWith(".boykta", ignoreCase = true) &&
             intent.type != "application/octet-stream") return
-
         handleImportUri(uri)
     }
 
@@ -206,8 +290,6 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
             showSnack("❌ ملف غير صالح أو تالف — تأكد أنه .boykta أصلي")
             return
         }
-
-        // Show confirmation — only name + expiry, never raw config
         ImportResultDialog.newInstance(config) {
             viewModel.importLocalServer(config)
             showSnack("✅ تم إضافة السيرفر: ${config.name}")
@@ -221,7 +303,7 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
         if (SecurityChecker.isSnifferDetected(this)) {
             showSnack("⚠️ تم رصد تطبيق اعتراض. الاتصال مرفوض."); return
         }
-
+        viewModel.selectServer(server)
         val announcement = pendingAnnouncement
         if (announcement != null) showAdThenConnect(server, announcement)
         else requestVpnPermissionAndConnect(server)
@@ -255,13 +337,10 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
 
     private fun startVpnConnection(server: Server) {
         startForegroundService(
-            Intent(this, BoykVpnService::class.java).apply {
-                action = BoykVpnService.ACTION_CONNECT
-            }
+            Intent(this, BoykVpnService::class.java).apply { action = BoykVpnService.ACTION_CONNECT }
         )
         lifecycleScope.launch {
             delay(500)
-            // For local servers, decrypt the URI before passing it
             val vlessUri = viewModel.resolveVlessUri(server)
             if (vlessUri == null) { showSnack("فشل فكّ تشفير كونفيغ السيرفر"); return@launch }
             val resolved = server.copy(config = vlessUri)
@@ -272,11 +351,15 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
     // ── VpnStateListener ──────────────────────────────────────────────────────
 
     override fun onConnected(serverName: String) = runOnUiThread {
+        isVpnConnected = true
         adapter.setConnectedServer(serverName)
         updateStatusUi(connected = true, name = serverName)
+
+        // Custom on-connect toast is shown by MainViewModel.importLocalServer()
     }
 
     override fun onDisconnected() = runOnUiThread {
+        isVpnConnected = false
         adapter.setConnectedServer(null)
         updateStatusUi(connected = false, name = null)
     }
@@ -286,10 +369,20 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
     // ── UI helpers ─────────────────────────────────────────────────────────────
 
     private fun updateStatusUi(connected: Boolean, name: String?) {
-        val color = if (connected) 0xFF00FF88.toInt() else 0xFFFF4444.toInt()
+        val color = if (connected) 0xFF00F2FE.toInt() else 0xFFFF0055.toInt()
         dotStatus.setBackgroundColor(color)
         tvStatus.text = if (connected) "متصل${name?.let { " — $it" } ?: ""}" else "غير متصل"
         tvStatus.setTextColor(color)
+
+        // Update main button
+        if (connected) {
+            btnConnectMain.text = "⏹ DISCONNECT"
+            btnConnectMain.setBackgroundColor(0xFFFF0055.toInt())
+        } else {
+            btnConnectMain.text = "▶ CONNECT"
+            btnConnectMain.setBackgroundColor(0xFF00F2FE.toInt())
+        }
+        btnConnectMain.setTextColor(0xFF000000.toInt())
     }
 
     private fun showSnack(msg: String) =
@@ -318,6 +411,7 @@ class MainActivity : AppCompatActivity(), ServerAdapter.Listener, BoykVpnService
 
     override fun onDestroy() {
         super.onDestroy()
+        selectedCountdownJob?.cancel()
         if (serviceBound) {
             vpnService?.removeListener(this)
             unbindService(connection)

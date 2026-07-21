@@ -1,31 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- App Name -->
     <string name="app_name">Boykta VPN</string>
 
-    <!-- Connection Actions -->
-    <string name="connect">اتصال</string>
-    <string name="disconnect">قطع الاتصال</string>
-    <string name="connecting">جارِ الاتصال…</string>
-
-    <!-- Server States -->
-    <string name="no_servers">لا توجد سيرفرات متاحة</string>
-    <string name="update">تحديث السيرفرات</string>
-    <string name="loading_servers">جارِ تحميل السيرفرات…</string>
-    <string name="server_expires_in">ينتهي خلال: %s</string>
-
-    <!-- VPN Status -->
+    <!-- Connection -->
+    <string name="connect">CONNECT</string>
+    <string name="disconnect">DISCONNECT</string>
+    <string name="connecting">CONNECTING…</string>
     <string name="connected">متصل</string>
     <string name="disconnected">غير متصل</string>
 
-    <!-- VPN Notification -->
+    <!-- Server list -->
+    <string name="no_servers">لا توجد سيرفرات متاحة</string>
+    <string name="update">تحديث</string>
+    <string name="loading_servers">جارِ تحميل السيرفرات…</string>
+    <string name="server_expires_in">%s</string>
+
+    <!-- Notification -->
     <string name="vpn_notification_title">Boykta VPN نشط</string>
     <string name="vpn_notification_channel">boykta_vpn_channel</string>
     <string name="vpn_notification_channel_name">Boykta VPN Service</string>
-    <string name="vpn_notification_body">VPN tunnel is active and protecting your connection</string>
+    <string name="vpn_notification_body">VPN tunnel active — protecting your connection</string>
 
     <!-- Ad Dialog -->
-    <string name="ad_close_in">الإغلاق بعد %d ثواني</string>
+    <string name="ad_close_in">الإغلاق بعد %d ثانية</string>
     <string name="ad_tap_for_more">اضغط للمزيد →</string>
     <string name="ad_loading">جارِ تحميل الإعلان…</string>
 
@@ -45,9 +42,16 @@
     <string name="import_config">استيراد إعدادات</string>
     <string name="import_success">تم استيراد الإعدادات بنجاح</string>
 
+    <!-- Ping -->
+    <string name="ping_label">PING</string>
+    <string name="ping_testing">…ms</string>
+
+    <!-- Log terminal -->
+    <string name="log_title">LIVE LOG</string>
+
     <!-- Misc -->
-    <string name="app_version">الإصدار %s</string>
-    <string name="servers_count">%d سيرفرات متاحة</string>
-    <string name="bytes_sent">مُرسَل: %s</string>
-    <string name="bytes_received">مُستقبَل: %s</string>
+    <string name="app_version">v%s</string>
+    <string name="servers_count">%d سيرفر متاح</string>
+    <string name="selected_server">السيرفر المختار</string>
+    <string name="expires_label">ينتهي خلال</string>
 </resources>

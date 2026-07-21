@@ -14,6 +14,8 @@ import com.boykta.vpn.db.toServer
 import com.boykta.vpn.model.Announcement
 import com.boykta.vpn.model.Server
 import com.boykta.vpn.model.isExpired
+import com.boykta.vpn.service.VpnLogManager
+import com.boykta.vpn.util.LatencyChecker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -31,13 +33,13 @@ class MainViewModel @Inject constructor(
     // Remote servers from API
     private val _remoteServers = MutableStateFlow<List<Server>>(emptyList())
 
-    // Local servers from Room (imported from .boykta files)
+    // Local servers from Room
     private val _localServers: Flow<List<Server>> = dao.getAll().map { list ->
         list.filter { System.currentTimeMillis() < it.expiresAt }
             .map { it.toServer() }
     }
 
-    /** Merged list shown in RecyclerView: local (top) + remote */
+    /** Merged server list: local (top) + remote */
     val allServers: StateFlow<List<Server>> = combine(_localServers, _remoteServers) { local, remote ->
         local + remote
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -45,6 +47,15 @@ class MainViewModel @Inject constructor(
     val announcement  = MutableStateFlow<Announcement?>(null)
     val isLoading     = MutableStateFlow(false)
     val error         = MutableStateFlow<String?>(null)
+
+    /** Live ping latency in ms, null = not yet measured, -1 = timeout */
+    val pingMs = MutableStateFlow<Long?>(null)
+
+    /** Currently selected/active server for the server card display */
+    val selectedServer = MutableStateFlow<Server?>(null)
+
+    /** VPN log stream forwarded from VpnLogManager (replay 120 entries) */
+    val vpnLogs: SharedFlow<String> = VpnLogManager.logs
 
     private var lastNotifId = -1
 
@@ -55,10 +66,13 @@ class MainViewModel @Inject constructor(
             isLoading.value = true
             error.value = null
             try {
+                VpnLogManager.sys("Fetching server list…")
                 val response = api.getServers()
                 _remoteServers.value = response.servers.filter { !it.isExpired() }
+                VpnLogManager.success("Loaded ${_remoteServers.value.size} servers")
             } catch (e: Exception) {
                 error.value = "فشل تحميل السيرفرات: ${e.message}"
+                VpnLogManager.error("Server fetch failed: ${e.message}")
             } finally {
                 isLoading.value = false
             }
@@ -89,14 +103,25 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    // ── Ping ──────────────────────────────────────────────────────────────────
+
+    fun measurePing() {
+        viewModelScope.launch {
+            pingMs.value = null
+            val latency = LatencyChecker.measureMs()
+            pingMs.value = latency
+            val label = if ((latency ?: -1) < 0) "timeout" else "${latency}ms"
+            VpnLogManager.info("Ping dns.google → $label")
+        }
+    }
+
     // ── Local (.boykta import) ────────────────────────────────────────────────
 
     fun importLocalServer(config: BoykConfig) {
         viewModelScope.launch {
-            // Encrypt the VLESS URI before storing (double-encrypted at rest)
-            val vlessUri = BoykConfigManager.configToVlessUri(config)
+            val vlessUri   = BoykConfigManager.configToVlessUri(config)
             val encryptedUri = CryptoHelper.encrypt(vlessUri)
-            val expiresAt = System.currentTimeMillis() + config.expiresHours * 3_600_000L
+            val expiresAt  = System.currentTimeMillis() + config.expiresSeconds * 1_000L
 
             dao.insert(
                 LocalServer(
@@ -105,25 +130,31 @@ class MainViewModel @Inject constructor(
                     expiresAt    = expiresAt,
                 )
             )
-            // Purge any stale entries
             dao.deleteExpired()
+            VpnLogManager.success("Imported server: ${config.name}")
+
+            // Show custom toast if the config has one
+            if (config.customToast.isNotBlank()) {
+                Toast.makeText(getApplication(), config.customToast, Toast.LENGTH_LONG).show()
+            }
         }
     }
 
     /**
-     * Resolve the actual VLESS URI for a server before connecting.
-     * - Remote servers: URI is in server.config (decrypted by API interceptor)
-     * - Local servers (id mapped to Room): decrypt encryptedUri from DB
+     * Resolve the actual proxy URI before connecting.
+     * - Remote servers: URI already in server.config (decrypted by API interceptor)
+     * - Local servers: decrypt from Room DB
      */
     suspend fun resolveVlessUri(server: Server): String? {
-        // Local server ids are Room auto-generated (small positive ints)
-        // Remote server ids come from PostgreSQL (could overlap — use a prefix convention)
-        // Simple heuristic: if server.config is blank, it's local
         return if (server.config.isNotBlank()) {
             server.config
         } else {
             val encryptedUri = dao.getEncryptedUri(server.id) ?: return null
             try { CryptoHelper.decrypt(encryptedUri) } catch (_: Exception) { null }
         }
+    }
+
+    fun selectServer(server: Server) {
+        selectedServer.value = server
     }
 }

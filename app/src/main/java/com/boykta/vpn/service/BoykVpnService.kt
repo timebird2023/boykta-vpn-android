@@ -15,11 +15,6 @@ import com.boykta.vpn.MainActivity
 import com.boykta.vpn.R
 import com.boykta.vpn.model.Server
 import kotlinx.coroutines.*
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.net.InetSocketAddress
-import java.nio.ByteBuffer
-import java.nio.channels.DatagramChannel
 import java.util.concurrent.atomic.AtomicBoolean
 
 class BoykVpnService : VpnService() {
@@ -28,20 +23,20 @@ class BoykVpnService : VpnService() {
         private const val TAG = "BoykVpnService"
         const val CHANNEL_ID = "boykta_vpn_channel"
         const val NOTIFICATION_ID = 1001
-        const val ACTION_CONNECT = "com.boykta.vpn.CONNECT"
+        const val ACTION_CONNECT    = "com.boykta.vpn.CONNECT"
         const val ACTION_DISCONNECT = "com.boykta.vpn.DISCONNECT"
-        const val EXTRA_SERVER_ID = "server_id"
+        const val EXTRA_SERVER_ID   = "server_id"
 
-        // Local SOCKS5 proxy port that Xray-core listens on
         const val LOCAL_SOCKS_PORT = 10808
-        const val LOCAL_HTTP_PORT = 10809
+        const val LOCAL_HTTP_PORT  = 10809
 
-        var isRunning = false
+        @Volatile var isRunning = false
             private set
     }
 
     private val binder = LocalBinder()
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var tunBridge: TunBridge? = null
     private var currentServer: Server? = null
     private val isConnected = AtomicBoolean(false)
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -67,11 +62,7 @@ class BoykVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_CONNECT -> {
-                val serverId = intent.getIntExtra(EXTRA_SERVER_ID, -1)
-                // Server is set via binder before this intent is sent
-                currentServer?.let { startVpn(it) }
-            }
+            ACTION_CONNECT    -> currentServer?.let { startVpn(it) }
             ACTION_DISCONNECT -> stopVpn()
         }
         return START_STICKY
@@ -82,6 +73,8 @@ class BoykVpnService : VpnService() {
         startVpn(server)
     }
 
+    // ── VPN startup ───────────────────────────────────────────────────────────
+
     private fun startVpn(server: Server) {
         serviceScope.launch {
             try {
@@ -89,56 +82,82 @@ class BoykVpnService : VpnService() {
                     startForeground(NOTIFICATION_ID, buildNotification("جارٍ الاتصال…"))
                 }
 
-                // 1. Start Xray-core with VLESS config
+                VpnLogManager.sys("VpnService started")
+                VpnLogManager.info("Connecting to: ${server.name}")
+
+                // 1. Start Xray-core with the proxy config URI
                 val xrayStarted = XrayManager.start(server.config, LOCAL_SOCKS_PORT, LOCAL_HTTP_PORT)
                 if (!xrayStarted) {
                     notifyError("فشل تشغيل محرك VPN")
+                    VpnLogManager.error("Xray engine failed to start")
                     return@launch
                 }
 
-                // 2. Build VPN interface (TUN)
-                val builder = Builder()
-                    .setSession("Boykta VPN")
-                    .addAddress("10.0.0.2", 24)
-                    .addDnsServer("1.1.1.1")
-                    .addDnsServer("8.8.8.8")
-                    .addRoute("0.0.0.0", 0) // Route all traffic
+                // 2. Build the TUN interface
+                //    MTU 1500, DNS 8.8.8.8 + 1.1.1.1, route all IPv4 traffic
+                val tunPfd = Builder()
+                    .setSession("Boykta VPN — ${server.name}")
                     .setMtu(1500)
+                    .addAddress("10.88.0.1", 30)          // TUN local address
+                    .addDnsServer("8.8.8.8")
+                    .addDnsServer("1.1.1.1")
+                    .addRoute("0.0.0.0", 0)               // Route all IPv4 traffic
+                    .addDisallowedApplication(packageName) // Don't route our own traffic (prevents loop)
+                    .establish()
+                    ?: throw IllegalStateException("Failed to establish TUN interface")
 
-                vpnInterface = builder.establish()
-                    ?: throw IllegalStateException("فشل إنشاء واجهة VPN")
-
-                isRunning = true
+                vpnInterface = tunPfd
+                isRunning    = true
                 isConnected.set(true)
 
+                VpnLogManager.success("TUN interface established (MTU 1500)")
+                VpnLogManager.info("DNS: 8.8.8.8, 1.1.1.1 | Route: 0.0.0.0/0")
+
+                // 3. Start TUN → SOCKS5 bridge
+                val bridge = TunBridge(tunPfd, LOCAL_SOCKS_PORT, this@BoykVpnService)
+                tunBridge = bridge
+                bridge.start()
+
+                VpnLogManager.success("Handshake established — internet routing active")
+
                 withContext(Dispatchers.Main) {
-                    updateNotification("متصل بـ: ${server.name}")
+                    updateNotification("متصل: ${server.name}")
                     listeners.forEach { it.onConnected(server.name) }
                 }
 
-                // 3. Start tun2socks packet forwarding
-                startPacketForwarding()
+                // 4. Keep-alive: log traffic stats every 30 s
+                serviceScope.launch {
+                    var ticks = 0
+                    while (isConnected.get()) {
+                        delay(30_000)
+                        ticks++
+                        if (XrayManager.isRunning()) {
+                            VpnLogManager.info("200 OK — tunnel alive (${ticks * 30}s)")
+                        } else {
+                            VpnLogManager.warn("Xray core stopped unexpectedly — reconnecting…")
+                            stopVpn()
+                        }
+                    }
+                }
 
             } catch (e: Exception) {
                 Log.e(TAG, "VPN connection failed", e)
+                VpnLogManager.error("Connection failed: ${e.message}")
                 notifyError("فشل الاتصال: ${e.message}")
                 stopVpn()
             }
         }
     }
 
-    private suspend fun startPacketForwarding() {
-        // Hand off to XrayManager's tun2socks engine
-        XrayManager.startTun2Socks(
-            tunFd = vpnInterface!!.fd,
-            socksPort = LOCAL_SOCKS_PORT
-        )
-    }
+    // ── VPN teardown ─────────────────────────────────────────────────────────
 
     fun stopVpn() {
         serviceScope.launch {
             isRunning = false
             isConnected.set(false)
+
+            tunBridge?.stop()
+            tunBridge = null
 
             XrayManager.stop()
 
@@ -148,6 +167,8 @@ class BoykVpnService : VpnService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing VPN interface", e)
             }
+
+            VpnLogManager.sys("VpnService stopped")
 
             withContext(Dispatchers.Main) {
                 listeners.forEach { it.onDisconnected() }
@@ -176,24 +197,21 @@ class BoykVpnService : VpnService() {
         }
     }
 
+    // ── Notification ─────────────────────────────────────────────────────────
+
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Boykta VPN",
-            NotificationManager.IMPORTANCE_LOW
+            CHANNEL_ID, "Boykta VPN", NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = "حالة اتصال Boykta VPN"
             setShowBadge(false)
         }
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-            .createNotificationChannel(channel)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
     }
 
     private fun buildNotification(status: String): Notification {
-        val intent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
+        val mainIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         val disconnectIntent = PendingIntent.getService(
             this, 1,
@@ -204,20 +222,21 @@ class BoykVpnService : VpnService() {
             .setContentTitle("Boykta VPN")
             .setContentText(status)
             .setSmallIcon(R.drawable.ic_shield)
-            .setContentIntent(intent)
+            .setContentIntent(mainIntent)
             .addAction(R.drawable.ic_close, "قطع الاتصال", disconnectIntent)
             .setOngoing(true)
-            .setColor(0xFF00D4FF.toInt())
+            .setColor(0xFF00F2FE.toInt())
             .build()
     }
 
     private fun updateNotification(status: String) {
-        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(status))
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(NOTIFICATION_ID, buildNotification(status))
     }
 
     override fun onRevoke() {
         super.onRevoke()
+        VpnLogManager.warn("VPN permission revoked by system")
         stopVpn()
     }
 

@@ -24,7 +24,7 @@ class ImportResultDialog : BottomSheetDialogFragment() {
             return ImportResultDialog().apply {
                 arguments = Bundle().apply {
                     putString(ARG_NAME, config.name)
-                    putLong(ARG_EXPIRY, config.expiresHours)
+                    putLong(ARG_EXPIRY, config.expiresSeconds)
                 }
                 this.onConfirm = onConfirm
             }
@@ -44,7 +44,14 @@ class ImportResultDialog : BottomSheetDialogFragment() {
         val expiry = arguments?.getLong(ARG_EXPIRY) ?: 24L
 
         view.findViewById<TextView>(R.id.tvImportName).text = name
-        view.findViewById<TextView>(R.id.tvImportExpiry).text = "ينتهي خلال $expiry ساعة"
+        val hours = expiry / 3600
+        val days  = hours / 24
+        val expiryLabel = when {
+            days > 0  -> "$days يوم"
+            hours > 0 -> "$hours ساعة"
+            else      -> "${expiry / 60} دقيقة"
+        }
+        view.findViewById<TextView>(R.id.tvImportExpiry).text = "ينتهي خلال $expiryLabel"
 
         view.findViewById<MaterialButton>(R.id.btnConfirmImport).setOnClickListener {
             onConfirm?.invoke()

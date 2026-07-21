@@ -17,25 +17,26 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="🔐 تصدير كونفيغ .boykta"
-            android:textColor="@color/text_primary"
-            android:textSize="18sp"
+            android:textColor="@color/primary"
+            android:textSize="17sp"
             android:textStyle="bold"
-            android:layout_marginBottom="16dp"/>
+            android:fontFamily="monospace"
+            android:layout_marginBottom="16dp" />
 
-        <!-- Protocol -->
+        <!-- Protocol spinner -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="البروتوكول"
             android:textColor="@color/text_secondary"
-            android:textSize="12sp"/>
+            android:textSize="11sp" />
         <Spinner
             android:id="@+id/spinnerProtocol"
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:background="@color/surface"
             android:popupBackground="@color/surface"
-            android:layout_marginBottom="12dp"/>
+            android:layout_marginBottom="12dp" />
 
         <!-- Server Name -->
         <com.google.android.material.textfield.TextInputLayout
@@ -43,7 +44,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="اسم السيرفر (يُعرض للمستخدم فقط)"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -51,7 +52,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:inputType="text"
-                android:textColor="@color/text_primary"/>
+                android:textColor="@color/text_primary" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <!-- Host -->
@@ -60,7 +61,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="Host / IP السيرفر الحقيقي"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -68,7 +69,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:inputType="textNoSuggestions"
-                android:textColor="@color/text_primary"/>
+                android:textColor="@color/text_primary" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <!-- SNI -->
@@ -77,7 +78,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="SNI (TLS Server Name)"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -85,7 +86,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:inputType="textNoSuggestions"
-                android:textColor="@color/text_primary"/>
+                android:textColor="@color/text_primary" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <!-- Host Header -->
@@ -94,7 +95,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="Host Header (WebSocket)"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -102,15 +103,15 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:inputType="textNoSuggestions"
-                android:textColor="@color/text_primary"/>
+                android:textColor="@color/text_primary" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Port + UUID in one row -->
+        <!-- Port + UUID row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="10dp">
 
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
@@ -127,7 +128,7 @@
                     android:layout_height="wrap_content"
                     android:inputType="number"
                     android:text="25227"
-                    android:textColor="@color/text_primary"/>
+                    android:textColor="@color/text_primary" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
@@ -143,17 +144,17 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:inputType="textNoSuggestions"
-                    android:textColor="@color/text_primary"/>
+                    android:textColor="@color/text_primary" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- Path -->
+        <!-- WebSocket Path -->
         <com.google.android.material.textfield.TextInputLayout
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="WebSocket Path"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -162,33 +163,131 @@
                 android:layout_height="wrap_content"
                 android:inputType="text"
                 android:text="/"
-                android:textColor="@color/text_primary"/>
+                android:textColor="@color/text_primary" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Expiry -->
+        <!-- Shadowsocks cipher (hidden unless SS selected) -->
+        <LinearLayout
+            android:id="@+id/rowSsMethod"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="10dp">
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Shadowsocks Cipher Method"
+                app:boxStrokeColor="@color/accent"
+                app:hintTextColor="@color/accent">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSsMethod"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="text"
+                    android:text="aes-256-gcm"
+                    android:textColor="@color/text_primary" />
+            </com.google.android.material.textfield.TextInputLayout>
+        </LinearLayout>
+
+        <!-- Expiry + unit row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="10dp">
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="0.5"
+                android:layout_marginEnd="8dp"
+                android:hint="مدة الصلاحية"
+                app:boxStrokeColor="@color/accent"
+                app:hintTextColor="@color/accent">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etExpiry"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="number"
+                    android:text="24"
+                    android:textColor="@color/text_primary" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Duration unit spinner -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="0.5"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="وحدة الوقت"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="10sp" />
+                <Spinner
+                    android:id="@+id/spinnerDurUnit"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@color/surface"
+                    android:popupBackground="@color/surface" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Custom toast/banner -->
         <com.google.android.material.textfield.TextInputLayout
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="مدة الصلاحية (ساعات)"
-            android:layout_marginBottom="16dp"
-            app:boxStrokeColor="@color/accent"
-            app:hintTextColor="@color/accent">
+            android:hint="رسالة الاتصال الناجح (اختياري)"
+            android:layout_marginBottom="14dp"
+            app:boxStrokeColor="@color/neon_yellow"
+            app:hintTextColor="@color/neon_yellow">
             <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etExpiry"
+                android:id="@+id/etCustomToast"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="number"
-                android:text="24"
-                android:textColor="@color/text_primary"/>
+                android:inputType="text"
+                android:hint="مثال: مرحباً! أنت متصل الآن 🎉"
+                android:textColor="@color/text_primary" />
         </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Lock toggle -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="14dp">
+
+            <Switch
+                android:id="@+id/switchLocked"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true" />
+
+            <TextView
+                android:id="@+id/tvLockStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="10dp"
+                android:text="🔒 مشفر (Locked)"
+                android:textColor="@color/primary"
+                android:textSize="13sp"
+                android:fontFamily="monospace" />
+
+        </LinearLayout>
 
         <!-- Buttons -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="8dp">
+            android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnCancel"
@@ -196,33 +295,34 @@
                 android:layout_width="0dp"
                 android:layout_height="52dp"
                 android:layout_weight="1"
-                android:layout_marginEnd="12dp"
+                android:layout_marginEnd="10dp"
                 android:text="إلغاء"
                 android:textColor="@color/text_secondary"
-                app:strokeColor="@color/border"/>
+                app:strokeColor="@color/border" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnExport"
                 android:layout_width="0dp"
                 android:layout_height="52dp"
                 android:layout_weight="1"
-                android:text="📤 تصدير .boykta"
+                android:text="📤 تصدير"
                 android:textColor="#000000"
                 android:textStyle="bold"
                 app:backgroundTint="@color/primary"
-                app:cornerRadius="14dp"/>
+                app:cornerRadius="14dp" />
+
         </LinearLayout>
 
-        <!-- Security notice -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🔒 الملف مشفر بـ AES-256-GCM — لا يمكن فتحه خارج التطبيق"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp"
+            android:text="🔒 Locked = AES-256-GCM | 🔓 Unlocked = JSON قابل للقراءة"
+            android:textColor="@color/text_disabled"
+            android:textSize="10sp"
+            android:fontFamily="monospace"
             android:gravity="center"
             android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp"/>
+            android:layout_marginBottom="8dp" />
 
     </LinearLayout>
 </ScrollView>

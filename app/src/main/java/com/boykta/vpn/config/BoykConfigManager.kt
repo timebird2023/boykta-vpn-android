@@ -10,20 +10,28 @@ import java.io.FileOutputStream
 object BoykConfigManager {
 
     /**
-     * Encrypt a BoykConfig and save it as [name].boykta to Downloads.
+     * Export a BoykConfig to a .boykta file in Downloads.
+     *
+     * If [config.locked] is true  → AES-256-GCM encrypted (raw fields hidden).
+     * If [config.locked] is false → raw JSON (visible on import — "unlocked" mode).
+     *
      * @return the saved File, or null on failure
      */
     fun export(context: Context, config: BoykConfig): File? {
         return try {
-            val encrypted = CryptoHelper.encrypt(config.toJson())
+            val payload: String = if (config.locked) {
+                CryptoHelper.encrypt(config.toJson())
+            } else {
+                // Unlocked: plain JSON, importable and human-readable
+                config.toJson()
+            }
 
-            // Save to Downloads folder
             val downloadsDir = Environment.getExternalStoragePublicDirectory(
                 Environment.DIRECTORY_DOWNLOADS
             )
             downloadsDir.mkdirs()
             val file = File(downloadsDir, config.fileName())
-            FileOutputStream(file).use { it.write(encrypted.toByteArray(Charsets.UTF_8)) }
+            FileOutputStream(file).use { it.write(payload.toByteArray(Charsets.UTF_8)) }
             file
         } catch (e: Exception) {
             e.printStackTrace()
@@ -32,7 +40,9 @@ object BoykConfigManager {
     }
 
     /**
-     * Decrypt and parse a .boykta file from a URI (intent or file picker).
+     * Decrypt and parse a .boykta file from a URI.
+     * Accepts both locked (AES-256-GCM) and unlocked (plain JSON) files.
+     *
      * @return BoykConfig on success, null on failure
      */
     fun import(context: Context, uri: Uri): BoykConfig? {
@@ -41,10 +51,10 @@ object BoykConfigManager {
                 it.readBytes().toString(Charsets.UTF_8)
             } ?: return null
 
-            val json = if (CryptoHelper.isEncrypted(raw)) {
-                CryptoHelper.decrypt(raw)
-            } else {
-                return null  // reject plain-text files — must be encrypted
+            val json = when {
+                CryptoHelper.isEncrypted(raw) -> CryptoHelper.decrypt(raw)
+                raw.trimStart().startsWith("{") -> raw  // unlocked plain JSON
+                else -> return null
             }
 
             BoykConfig.fromJson(json)
@@ -54,9 +64,6 @@ object BoykConfigManager {
         }
     }
 
-    /**
-     * Convert a BoykConfig to a Server-like object for use in the VPN engine.
-     * The VLESS URI is internal only — never displayed.
-     */
-    fun configToVlessUri(config: BoykConfig): String = config.toVlessUri()
+    /** Convert a BoykConfig to a proxy URI for the VPN engine (internal use only). */
+    fun configToVlessUri(config: BoykConfig): String = config.toProxyUri()
 }

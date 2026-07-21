@@ -5,10 +5,11 @@ import java.util.*
 
 data class Server(
     val id: Int,
-    val name: String,      // Display name only — users never see the raw config
-    val config: String,    // VLESS URI — decrypted from AES-256 API, never shown in UI
-    val expiresAt: String, // ISO 8601 datetime
+    val name: String,           // Display name only — never show raw config
+    val config: String,         // VLESS/Trojan/VMess URI (decrypted, never shown in UI)
+    val expiresAt: String,      // ISO 8601 datetime
     val isActive: Boolean,
+    val protocol: String = "vless",  // "vless" | "trojan" | "vmess" | "ss"
 )
 
 private val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -28,11 +29,20 @@ fun Server.remainingMs(): Long = maxOf(0L, expiresAtMs() - System.currentTimeMil
 
 fun Server.isExpired(): Boolean = remainingMs() <= 0L
 
+/**
+ * Returns remaining time as "01d 12h:30m:15s" as required by the UI spec.
+ */
 fun Server.formattedRemaining(): String {
     val ms = remainingMs()
     if (ms <= 0L) return "منتهي الصلاحية"
-    val h = ms / 3_600_000
-    val m = (ms % 3_600_000) / 60_000
-    val s = (ms % 60_000) / 1_000
-    return "%02d:%02d:%02d".format(h, m, s)
+    val totalSec = ms / 1_000
+    val d = totalSec / 86_400
+    val h = (totalSec % 86_400) / 3_600
+    val m = (totalSec % 3_600) / 60
+    val s = totalSec % 60
+    return if (d > 0) "%02dd %02dh:%02dm:%02ds".format(d, h, m, s)
+    else "%02dh:%02dm:%02ds".format(h, m, s)
 }
+
+/** Protocol badge label shown in the server card */
+fun Server.protocolLabel(): String = protocol.uppercase()

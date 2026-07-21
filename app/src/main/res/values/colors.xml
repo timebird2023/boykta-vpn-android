@@ -1,38 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Core palette -->
-    <color name="background">#0A0E1A</color>
-    <color name="card">#141928</color>
-    <color name="surface">#1A2340</color>
-    <color name="border">#2A3555</color>
+    <!-- Core background palette (Boykta Net dark neon) -->
+    <color name="background">#0B0E14</color>
+    <color name="background_alt">#121622</color>
+    <color name="card">#1A1F2C</color>
+    <color name="surface">#1A1F2C</color>
+    <color name="surface_variant">#1E2535</color>
+    <color name="border">#00F2FE33</color>
     <color name="divider">#1E2A44</color>
 
-    <!-- Brand colors -->
-    <color name="primary">#00D4FF</color>
-    <color name="primary_dark">#0099BB</color>
-    <color name="accent">#00FF88</color>
-    <color name="error">#FF4444</color>
+    <!-- Brand accents -->
+    <color name="primary">#00F2FE</color>
+    <color name="primary_dark">#00AABB</color>
+    <color name="accent">#FF0055</color>
+    <color name="accent_dark">#CC0044</color>
+    <color name="neon_yellow">#FFCC00</color>
+    <color name="error">#FF0055</color>
 
     <!-- Text -->
     <color name="text_primary">#FFFFFF</color>
     <color name="text_secondary">#6B7FA8</color>
     <color name="text_disabled">#3A4A6A</color>
     <color name="text_on_primary">#000000</color>
-    <color name="text_on_accent">#000000</color>
+    <color name="text_on_accent">#FFFFFF</color>
 
     <!-- Status dots -->
-    <color name="dot_connected">#00FF88</color>
-    <color name="dot_disconnected">#FF4444</color>
-    <color name="dot_expired">#666666</color>
+    <color name="dot_connected">#00F2FE</color>
+    <color name="dot_disconnected">#FF0055</color>
+    <color name="dot_expired">#3A4A6A</color>
 
-    <!-- Additional semantic colors -->
-    <color name="accent_dark">#00BB66</color>
+    <!-- Semantic -->
     <color name="dialog_background">#CC000000</color>
-    <color name="surface_variant">#1E2A3A</color>
+    <color name="log_terminal_bg">#0A0C12</color>
 
-    <!-- Android system -->
+    <!-- Android system bars -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="statusBarColor">#0A0E1A</color>
-    <color name="navigationBarColor">#0A0E1A</color>
+    <color name="statusBarColor">#0B0E14</color>
+    <color name="navigationBarColor">#0B0E14</color>
 </resources>
