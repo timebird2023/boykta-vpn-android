@@ -31,13 +31,8 @@ jobs:
           curl -L "https://github.com/2dust/v2rayNG/releases/download/${LIBXRAY_VERSION}/libXray.aar" -o app/libs/libXray.aar || curl -L "https://github.com/2dust/v2rayNG/releases/download/1.9.30/libXray.aar" -o app/libs/libXray.aar
           ls -lh app/libs/
 
-      - name: Generate Gradle Wrapper & Make executable
-        run: |
-          gradle wrapper --gradle-version 8.7
-          chmod +x ./gradlew
-
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
+      - name: Build Debug APK directly
+        run: gradle assembleDebug
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
