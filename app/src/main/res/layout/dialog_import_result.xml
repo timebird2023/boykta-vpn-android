@@ -5,8 +5,7 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@color/card"
-    android:padding="24dp"
-    android:gap="16dp">
+    android:padding="24dp">
 
     <TextView
         android:layout_width="wrap_content"
@@ -14,14 +13,16 @@
         android:text="📥 تم قراءة الملف بنجاح"
         android:textColor="@color/accent"
         android:textSize="18sp"
-        android:textStyle="bold"/>
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp"/>
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="هل تريد إضافة هذا السيرفر؟"
         android:textColor="@color/text_secondary"
-        android:textSize="14sp"/>
+        android:textSize="14sp"
+        android:layout_marginBottom="16dp"/>
 
     <!-- Shield icon + server name box -->
     <LinearLayout
@@ -31,20 +32,20 @@
         android:background="@color/surface"
         android:padding="16dp"
         android:gravity="center_vertical"
-        android:gap="12dp">
+        android:layout_marginBottom="12dp">
 
         <ImageView
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:src="@drawable/ic_shield"
+            android:layout_marginEnd="12dp"
             android:contentDescription="shield"/>
 
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="vertical"
-            android:gap="4dp">
+            android:orientation="vertical">
 
             <TextView
                 android:id="@+id/tvImportName"
@@ -52,7 +53,8 @@
                 android:layout_height="wrap_content"
                 android:textColor="@color/text_primary"
                 android:textSize="16sp"
-                android:textStyle="bold"/>
+                android:textStyle="bold"
+                android:layout_marginBottom="4dp"/>
 
             <TextView
                 android:id="@+id/tvImportExpiry"
@@ -70,14 +72,14 @@
         android:text="🔒 بيانات الاتصال الحقيقية مشفرة ومخفية — لن تُعرض أبداً"
         android:textColor="@color/text_secondary"
         android:textSize="12sp"
-        android:gravity="center"/>
+        android:gravity="center"
+        android:layout_marginBottom="16dp"/>
 
     <!-- Buttons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gap="12dp">
+        android:orientation="horizontal">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCancelImport"
@@ -85,6 +87,7 @@
             android:layout_width="0dp"
             android:layout_height="52dp"
             android:layout_weight="1"
+            android:layout_marginEnd="12dp"
             android:text="إلغاء"
             android:textColor="@color/text_secondary"
             app:strokeColor="@color/border"/>

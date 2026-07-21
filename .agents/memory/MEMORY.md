@@ -1,0 +1,1 @@
+- [Android build setup on Replit](android-build-setup.md) — env vars, SDK paths, all build fixes applied to get Boykta VPN compiling.

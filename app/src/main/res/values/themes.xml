@@ -16,7 +16,6 @@
 
         <!-- Background -->
         <item name="android:colorBackground">@color/background</item>
-        <item name="colorBackground">@color/background</item>
         <item name="colorOnBackground">@color/text_primary</item>
 
         <!-- Surface -->
@@ -111,10 +110,11 @@
     </style>
 
     <!-- Ad Dialog (full-screen) -->
-    <style name="Theme.BoykVpn.Dialog.Ad" parent="Theme.MaterialComponents.DayNight.Dialog.FullScreen">
+    <style name="Theme.BoykVpn.Dialog.Ad" parent="Theme.MaterialComponents.DayNight.Dialog">
         <item name="android:colorBackground">@color/dialog_background</item>
         <item name="android:windowBackground">@color/dialog_background</item>
         <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowFullscreen">true</item>
         <item name="colorPrimary">@color/primary</item>
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:statusBarColor">#000000</item>

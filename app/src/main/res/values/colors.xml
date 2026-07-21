@@ -25,6 +25,11 @@
     <color name="dot_disconnected">#FF4444</color>
     <color name="dot_expired">#666666</color>
 
+    <!-- Additional semantic colors -->
+    <color name="accent_dark">#00BB66</color>
+    <color name="dialog_background">#CC000000</color>
+    <color name="surface_variant">#1E2A3A</color>
+
     <!-- Android system -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>

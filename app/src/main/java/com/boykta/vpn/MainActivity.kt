@@ -26,6 +26,7 @@ import com.boykta.vpn.config.BoykConfig
 import com.boykta.vpn.config.BoykConfigManager
 import com.boykta.vpn.model.Server
 import com.boykta.vpn.model.Announcement
+import com.boykta.vpn.model.isExpired
 import com.boykta.vpn.service.BoykVpnService
 import com.boykta.vpn.ui.AdDialog
 import com.boykta.vpn.ui.ConfigExportDialog

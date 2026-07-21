@@ -68,7 +68,7 @@ class ConfigExportDialog : BottomSheetDialogFragment() {
             val hostHeader = etHostHeader.text?.toString()?.trim().orEmpty()
             val portStr    = etPort.text?.toString()?.trim() ?: ""
             val uuid       = etUuid.text?.toString()?.trim() ?: ""
-            val path       = etPath.text?.toString()?.trim().ifBlank { "/" }
+            val path       = etPath.text?.toString()?.trim()?.ifBlank { "/" } ?: "/"
             val expiryStr  = etExpiry.text?.toString()?.trim() ?: "24"
             val protocol   = protocols[spinnerProtocol.selectedItemPosition].lowercase()
 

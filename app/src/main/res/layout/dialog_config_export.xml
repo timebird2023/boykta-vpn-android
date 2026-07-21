@@ -10,8 +10,7 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gap="12dp">
+        android:orientation="vertical">
 
         <!-- Title -->
         <TextView
@@ -21,7 +20,7 @@
             android:textColor="@color/text_primary"
             android:textSize="18sp"
             android:textStyle="bold"
-            android:layout_marginBottom="8dp"/>
+            android:layout_marginBottom="16dp"/>
 
         <!-- Protocol -->
         <TextView
@@ -35,7 +34,8 @@
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:background="@color/surface"
-            android:popupBackground="@color/surface"/>
+            android:popupBackground="@color/surface"
+            android:layout_marginBottom="12dp"/>
 
         <!-- Server Name -->
         <com.google.android.material.textfield.TextInputLayout
@@ -43,6 +43,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="اسم السيرفر (يُعرض للمستخدم فقط)"
+            android:layout_marginBottom="12dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -59,6 +60,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="Host / IP السيرفر الحقيقي"
+            android:layout_marginBottom="12dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -75,6 +77,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="SNI (TLS Server Name)"
+            android:layout_marginBottom="12dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -91,6 +94,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="Host Header (WebSocket)"
+            android:layout_marginBottom="12dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -106,13 +110,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gap="8dp">
+            android:layout_marginBottom="12dp">
 
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="0.3"
+                android:layout_marginEnd="8dp"
                 android:hint="Port"
                 app:boxStrokeColor="@color/primary"
                 app:hintTextColor="@color/primary">
@@ -148,6 +153,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="WebSocket Path"
+            android:layout_marginBottom="12dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
             <com.google.android.material.textfield.TextInputEditText
@@ -165,6 +171,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="مدة الصلاحية (ساعات)"
+            android:layout_marginBottom="16dp"
             app:boxStrokeColor="@color/accent"
             app:hintTextColor="@color/accent">
             <com.google.android.material.textfield.TextInputEditText
@@ -181,7 +188,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gap="12dp"
             android:layout_marginTop="8dp">
 
             <com.google.android.material.button.MaterialButton
@@ -190,6 +196,7 @@
                 android:layout_width="0dp"
                 android:layout_height="52dp"
                 android:layout_weight="1"
+                android:layout_marginEnd="12dp"
                 android:text="إلغاء"
                 android:textColor="@color/text_secondary"
                 app:strokeColor="@color/border"/>
@@ -214,7 +221,7 @@
             android:textColor="@color/text_secondary"
             android:textSize="11sp"
             android:gravity="center"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp"/>
 
     </LinearLayout>

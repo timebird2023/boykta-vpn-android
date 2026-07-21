@@ -56,7 +56,7 @@
                 app:layout_constraintTop_toTopOf="@id/ivShield"
                 app:layout_constraintBottom_toTopOf="@id/tvStatus"
                 app:layout_constraintStart_toEndOf="@id/ivShield"
-                app:layout_constraintEnd_toStartOf="@id/statusDot" />
+                app:layout_constraintEnd_toStartOf="@id/dotStatus" />
 
             <!-- Status Row (dot + text) -->
             <View
