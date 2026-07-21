@@ -9,7 +9,9 @@ data class Server(
     val config: String,         // VLESS/Trojan/VMess URI (decrypted, never shown in UI)
     val expiresAt: String,      // ISO 8601 datetime
     val isActive: Boolean,
-    val protocol: String = "vless",  // "vless" | "trojan" | "vmess" | "ss"
+    val protocol: String = "vless",   // "vless" | "trojan" | "vmess" | "ss" | "local"
+    val isLocked: Boolean = true,     // false = unlocked config — show params in UI
+    val configJson: String = "",      // For unlocked local configs: raw BoykConfig JSON
 )
 
 private val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -45,4 +47,8 @@ fun Server.formattedRemaining(): String {
 }
 
 /** Protocol badge label shown in the server card */
-fun Server.protocolLabel(): String = protocol.uppercase()
+fun Server.protocolLabel(): String = when {
+    protocol == "local" && !isLocked -> "UNLOCKED"
+    protocol == "local" && isLocked  -> "LOCKED"
+    else                             -> protocol.uppercase()
+}

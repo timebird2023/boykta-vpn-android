@@ -5,7 +5,6 @@ import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.boykta.vpn.api.ApiClient
-import com.boykta.vpn.config.BoykConfigManager
 import com.boykta.vpn.db.LocalDatabase
 import com.boykta.vpn.db.toServer
 import com.boykta.vpn.model.Announcement
@@ -27,6 +26,48 @@ class MainViewModel @Inject constructor(
     private val db  = LocalDatabase.get(application)
     private val dao = db.localServerDao()
 
+    // ── Built-in test server (DEBUG builds only) ──────────────────────────────
+    // Loaded from build-config resources so credentials stay out of source.
+    // In release APKs this list is empty — test server never ships to end-users.
+    private val builtInTestServers: List<Server> = if (BuildConfig.DEBUG) {
+        // Connection parameters are defined in app/src/debug/res/values/debug_config.xml
+        // so they can be rotated without touching shared source code.
+        val cfg = debugTestServerConfig()
+        if (cfg != null) listOf(cfg) else emptyList()
+    } else {
+        emptyList()
+    }
+
+    /**
+     * Returns a debug-only Server from build-type resources, or null if not configured.
+     * Parameters come from `app/src/debug/res/values/debug_config.xml` which is
+     * excluded from release builds via src set isolation.
+     */
+    private fun debugTestServerConfig(): Server? {
+        return try {
+            val app = getApplication<Application>()
+            val res = app.resources
+            val pkgName = app.packageName
+            fun str(name: String) = res.getString(
+                res.getIdentifier(name, "string", pkgName)
+            )
+            val uri  = str("debug_test_server_uri")
+            val name = str("debug_test_server_name")
+            if (uri.isBlank() || name.isBlank()) return null
+            Server(
+                id        = -999,
+                name      = name,
+                config    = uri,
+                expiresAt = "2099-12-31T23:59:59.000Z",
+                isActive  = true,
+                protocol  = "vless",
+                isLocked  = false,
+            )
+        } catch (_: Exception) {
+            null  // resource not defined — skip silently
+        }
+    }
+
     // Remote servers from API
     private val _remoteServers = MutableStateFlow<List<Server>>(emptyList())
 
@@ -36,9 +77,9 @@ class MainViewModel @Inject constructor(
             .map { it.toServer() }
     }
 
-    /** Merged server list: local (top) + remote */
+    /** Merged server list: local (top) + built-in test + remote */
     val allServers: StateFlow<List<Server>> = combine(_localServers, _remoteServers) { local, remote ->
-        local + remote
+        local + builtInTestServer + remote
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val announcement  = MutableStateFlow<Announcement?>(null)
@@ -67,7 +108,7 @@ class MainViewModel @Inject constructor(
                 VpnLogManager.sys("Fetching server list…")
                 val response = api.getServers()
                 _remoteServers.value = response.servers.filter { !it.isExpired() }
-                VpnLogManager.success("Loaded ${_remoteServers.value.size} servers")
+                VpnLogManager.success("Loaded ${_remoteServers.value.size} remote servers")
             } catch (e: Exception) {
                 error.value = "فشل تحميل السيرفرات: ${e.message}"
                 VpnLogManager.error("Server fetch failed: ${e.message}")
@@ -103,10 +144,6 @@ class MainViewModel @Inject constructor(
 
     // ── Auto Ping (every 1 second) ────────────────────────────────────────────
 
-    /**
-     * Starts a background coroutine that pings https://dns.google every 1000 ms
-     * and emits the result into [pingMs]. Call once from MainActivity.
-     */
     fun startAutoPing() {
         if (autoPingJob?.isActive == true) return
         autoPingJob = viewModelScope.launch {
@@ -123,7 +160,6 @@ class MainViewModel @Inject constructor(
         autoPingJob = null
     }
 
-    /** One-shot manual ping (used for initial measurement before loop starts) */
     fun measurePing() {
         viewModelScope.launch {
             pingMs.value = LatencyChecker.measureMs()

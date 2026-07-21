@@ -14,6 +14,9 @@ import org.json.JSONObject
  * NOTE: All geosite/geoip routing rules have been REMOVED to avoid the
  * "stat /system/bin/geosite.dat: no such file or directory" crash.
  * Traffic routes directly through the proxy with no domain/IP classification.
+ *
+ * FIX: forceStop() is always called before start() to prevent
+ * "xray is already running" errors from stale instances.
  */
 object XrayManager {
 
@@ -25,14 +28,18 @@ object XrayManager {
     private const val METHOD_GET_STATE     = "getXrayState"
     private const val METHOD_VERSION       = "xrayVersion"
 
-    private var xrayRunning = false
+    @Volatile private var xrayRunning = false
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     /**
      * Start Xray-core with a proxy URI (VLESS / Trojan / VMess / SS).
+     * CRITICAL: Always calls forceStop() first to clean up any stale instance.
      */
     fun start(proxyUri: String, socksPort: Int, httpPort: Int): Boolean {
+        // Always stop first — prevents "xray is already running" crash
+        forceStop()
+
         return try {
             val configJson = buildXrayConfig(proxyUri, socksPort, httpPort)
             VpnLogManager.sys("Building Xray config for port $socksPort…")
@@ -49,8 +56,8 @@ object XrayManager {
             if (response.optBoolean("success", false)) {
                 xrayRunning = true
                 val ver = version() ?: "unknown"
-                VpnLogManager.success("Xray-core v$ver started — SOCKS5 127.0.0.1:$socksPort, HTTP :$httpPort")
-                Log.i(TAG, "Xray started")
+                VpnLogManager.success("Xray-core v$ver started — SOCKS5 127.0.0.1:$socksPort | HTTP :$httpPort")
+                Log.i(TAG, "Xray started successfully")
                 true
             } else {
                 val err = response.optString("error", "unknown error")
@@ -65,19 +72,32 @@ object XrayManager {
         }
     }
 
+    /**
+     * Graceful stop — respects internal running flag.
+     */
     fun stop() {
+        if (xrayRunning) {
+            forceStop()
+        }
+    }
+
+    /**
+     * Force-stop regardless of internal state flag.
+     * Sends the stop command to libXray unconditionally.
+     * Used before every start() to prevent stale-instance crashes.
+     */
+    fun forceStop() {
         try {
-            if (xrayRunning) {
-                LibXray.invoke(JSONObject().apply {
-                    put("apiVersion", API_VERSION)
-                    put("method", METHOD_STOP)
-                }.toString())
-                xrayRunning = false
-                VpnLogManager.sys("Xray-core stopped")
-                Log.i(TAG, "Xray stopped")
-            }
+            LibXray.invoke(JSONObject().apply {
+                put("apiVersion", API_VERSION)
+                put("method", METHOD_STOP)
+            }.toString())
+            VpnLogManager.sys("Xray-core stopped")
+            Log.i(TAG, "Xray force-stopped")
         } catch (e: Exception) {
-            Log.e(TAG, "Error stopping Xray", e)
+            Log.w(TAG, "forceStop exception (safe to ignore): ${e.message}")
+        } finally {
+            xrayRunning = false
         }
     }
 
@@ -223,7 +243,7 @@ object XrayManager {
                     })
                 })
             })
-            put("streamSettings", buildStreamSettings(p.type, p.security, p.sni, p.path, p.host))
+            put("streamSettings", buildStreamSettings(p.type, p.security, p.sni, p.path, p.hostHeader))
         }
     }
 
@@ -400,6 +420,7 @@ object XrayManager {
         val uuid: String, val host: String, val port: Int,
         val type: String = "ws", val security: String = "tls",
         val path: String = "/", val sni: String = "", val flow: String = "",
+        val hostHeader: String = "",
     )
 
     private fun parseVlessUri(uri: String): VlessParams {
@@ -422,12 +443,14 @@ object XrayManager {
             val kv = it.split("=")
             kv[0] to if (kv.size > 1) java.net.URLDecoder.decode(kv[1], "UTF-8") else ""
         }
-        VpnLogManager.info("VLESS → $host:$port (type=${params["type"]}, sni=${params["sni"]})")
+        val resolvedHost = params["host"]?.ifBlank { host } ?: host
+        VpnLogManager.info("VLESS → $host:$port (type=${params["type"]}, sni=${params["sni"]}, host=$resolvedHost)")
         return VlessParams(
             uuid = uuid, host = host, port = port,
             type = params["type"] ?: "ws", security = params["security"] ?: "tls",
             path = params["path"] ?: "/", sni = params["sni"] ?: host,
             flow = params["flow"] ?: "",
+            hostHeader = resolvedHost,
         )
     }
 }

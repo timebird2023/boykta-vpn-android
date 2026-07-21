@@ -9,6 +9,14 @@ import java.util.Locale
 /**
  * Singleton log bus for the VPN pipeline.
  * Both BoykVpnService and XrayManager emit here; MainActivity subscribes.
+ *
+ * Log types:
+ *   sys()     — system/lifecycle events (grey)
+ *   info()    — informational (white)
+ *   success() — positive outcomes (cyan)
+ *   warn()    — warnings (yellow)
+ *   error()   — errors (red/pink)
+ *   device()  — hardware/environment info (grey-blue)
  */
 object VpnLogManager {
 
@@ -26,4 +34,5 @@ object VpnLogManager {
     fun warn(msg: String)    = log("⚠ $msg")
     fun error(msg: String)   = log("❌ $msg")
     fun sys(msg: String)     = log("⚙ $msg")
+    fun device(msg: String)  = log("◈ $msg")
 }

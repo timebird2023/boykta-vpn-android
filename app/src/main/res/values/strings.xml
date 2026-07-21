@@ -23,7 +23,7 @@
 
     <!-- Ad Dialog -->
     <string name="ad_close_in">الإغلاق بعد %d ثانية</string>
-    <string name="ad_tap_for_more">اضغط للمزيد →</string>
+    <string name="ad_tap_for_more">اضغط للمزيد ›</string>
     <string name="ad_loading">جارِ تحميل الإعلان…</string>
 
     <!-- Errors -->
@@ -62,7 +62,7 @@
     <!-- Config export -->
     <string name="connect_directly">اتصال مباشر</string>
     <string name="export_boykta">تصدير BOYKTA</string>
-    <string name="locked_field">[مشفّر ومحمي]</string>
+    <string name="locked_field">[محمي]</string>
 
     <!-- Privacy Policy -->
     <string name="privacy_policy_title">سياسة الخصوصية والاستخدام</string>
@@ -74,12 +74,12 @@
 
         ٢. البيانات المستخدمة\n
         • قائمة السيرفرات: تُحمَّل من خادم Boykta المشفّر وتُخزَّن مؤقتاً على الجهاز.\n
-        • ملفات التكوين (.boykta): مشفّرة بـ AES-256-GCM. لا تُرسَل أي بيانات منها إلى جهات خارجية.\n\n
+        • ملفات التكوين (.boykta): مشفّرة بتشفير متقدم. لا تُرسَل أي بيانات منها إلى جهات خارجية.\n\n
 
         ٣. الأمان والتشفير\n
         تستخدم Boykta VPN بروتوكولات تشفير قوية:\n
         • VLESS / VMess / Trojan عبر TLS\n
-        • AES-256-GCM لتشفير ملفات التكوين\n
+        • تشفير متقدم لملفات التكوين\n
         • SSL Pinning لمنع هجمات MITM\n\n
 
         ٤. الاستخدام المسموح\n

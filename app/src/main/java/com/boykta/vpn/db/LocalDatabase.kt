@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [LocalServer::class], version = 1, exportSchema = false)
+@Database(entities = [LocalServer::class], version = 2, exportSchema = false)
 abstract class LocalDatabase : RoomDatabase() {
 
     abstract fun localServerDao(): LocalServerDao
@@ -20,7 +20,7 @@ abstract class LocalDatabase : RoomDatabase() {
                     LocalDatabase::class.java,
                     "boykta_local.db"
                 )
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigration()   // drops & recreates on schema change
                 .build()
                 .also { INSTANCE = it }
             }

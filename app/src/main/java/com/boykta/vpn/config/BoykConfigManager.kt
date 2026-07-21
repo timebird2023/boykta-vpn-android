@@ -12,7 +12,7 @@ object BoykConfigManager {
     /**
      * Export a BoykConfig to a .boykta file in Downloads.
      *
-     * If [config.locked] is true  → AES-256-GCM encrypted (raw fields hidden).
+     * If [config.locked] is true  → encrypted (raw fields hidden).
      * If [config.locked] is false → raw JSON (visible on import — "unlocked" mode).
      *
      * @return the saved File, or null on failure
@@ -41,28 +41,41 @@ object BoykConfigManager {
 
     /**
      * Decrypt and parse a .boykta file from a URI.
-     * Accepts both locked (AES-256-GCM) and unlocked (plain JSON) files.
+     * Accepts both locked (encrypted) and unlocked (plain JSON) files.
      *
-     * @return BoykConfig on success, null on failure
+     * @return Pair(BoykConfig, isLocked) on success, null on failure
      */
-    fun import(context: Context, uri: Uri): BoykConfig? {
+    fun importWithLockInfo(context: Context, uri: Uri): Pair<BoykConfig, Boolean>? {
         return try {
             val raw = context.contentResolver.openInputStream(uri)?.use {
                 it.readBytes().toString(Charsets.UTF_8)
             } ?: return null
 
+            val isLocked: Boolean
             val json = when {
-                CryptoHelper.isEncrypted(raw) -> CryptoHelper.decrypt(raw)
-                raw.trimStart().startsWith("{") -> raw  // unlocked plain JSON
+                CryptoHelper.isEncrypted(raw) -> {
+                    isLocked = true
+                    CryptoHelper.decrypt(raw)
+                }
+                raw.trimStart().startsWith("{") -> {
+                    isLocked = false
+                    raw  // unlocked plain JSON
+                }
                 else -> return null
             }
 
-            BoykConfig.fromJson(json)
+            Pair(BoykConfig.fromJson(json), isLocked)
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
     }
+
+    /**
+     * Legacy import without lock info — kept for compatibility.
+     */
+    fun import(context: Context, uri: Uri): BoykConfig? =
+        importWithLockInfo(context, uri)?.first
 
     /** Convert a BoykConfig to a proxy URI for the VPN engine (internal use only). */
     fun configToVlessUri(config: BoykConfig): String = config.toProxyUri()

@@ -23,11 +23,10 @@ import kotlinx.coroutines.launch
 /**
  * Admin-mode bottom sheet: create and export a .boykta config file.
  *
- * v3 additions:
- *  - CONNECT DIRECTLY button: saves config to local DB then connects immediately
- *  - Locked fields show [ENCRYPTED & LOCKED] when locked is ON
- *  - Shadowsocks protocol support
- *  - Duration unit selector
+ * Locked configs   → raw fields hidden from the user ("كونفيغ مغلق").
+ * Unlocked configs → all params visible in the UI ("UNLOCKED CONFIG").
+ *
+ * No encryption algorithm names are shown to the end-user anywhere in this dialog.
  */
 class ConfigExportDialog : BottomSheetDialogFragment() {
 
@@ -35,7 +34,7 @@ class ConfigExportDialog : BottomSheetDialogFragment() {
         fun newInstance() = ConfigExportDialog()
     }
 
-    /** Called when user taps "Connect Directly" with a valid config */
+    /** Called when user taps "اتصال مباشر" with a valid config */
     var onConnectDirectly: ((BoykConfig) -> Unit)? = null
 
     override fun onCreateView(
@@ -88,11 +87,11 @@ class ConfigExportDialog : BottomSheetDialogFragment() {
             if (etHostHeader.text.isNullOrBlank()) etHostHeader.setText(text)
         }
 
-        // ── Lock toggle — locked fields show [ENCRYPTED & LOCKED] ─────────────
+        // ── Lock toggle ───────────────────────────────────────────────────────
         switchLocked.isChecked = true
-        updateLockUi(etUuid, etSni, etHost, etPath, tvLockStatus, true)
+        updateLockUi(tvLockStatus, true)
         switchLocked.setOnCheckedChangeListener { _, checked ->
-            updateLockUi(etUuid, etSni, etHost, etPath, tvLockStatus, checked)
+            updateLockUi(tvLockStatus, checked)
         }
 
         btnCancel.setOnClickListener { dismiss() }
@@ -106,20 +105,20 @@ class ConfigExportDialog : BottomSheetDialogFragment() {
             )?.let { config ->
                 val file = BoykConfigManager.export(requireContext(), config)
                 if (file != null) {
-                    val lockTag = if (config.locked) "🔒 مشفر" else "🔓 مكشوف"
+                    val lockTag = if (config.locked) "مغلق" else "مكشوف"
                     Toast.makeText(
                         requireContext(),
-                        "✅ تم الحفظ ($lockTag): ${file.name}\nفي مجلد Downloads",
+                        "تم الحفظ ($lockTag): ${file.name}\nفي مجلد Downloads",
                         Toast.LENGTH_LONG
                     ).show()
                     dismiss()
                 } else {
-                    showError(view, "❌ فشل التصدير — تحقق من أذونات التخزين")
+                    showError(view, "فشل التصدير — تحقق من أذونات التخزين")
                 }
             }
         }
 
-        // ── Connect Directly ──────────────────────────────────────────────────
+        // ── اتصال مباشر ──────────────────────────────────────────────────────
         btnConnectDirectly.setOnClickListener {
             buildConfig(
                 etName, etHost, etSni, etHostHeader, etPort, etUuid, etPath,
@@ -130,12 +129,15 @@ class ConfigExportDialog : BottomSheetDialogFragment() {
                 val db = LocalDatabase.get(requireContext())
                 CoroutineScope(Dispatchers.IO).launch {
                     val expiresAt = System.currentTimeMillis() + config.expiresSeconds * 1000L
-                    val encryptedUri = CryptoHelper.encrypt(config.toProxyUri())
+                    val uriToStore = if (config.locked) CryptoHelper.encrypt(config.toProxyUri())
+                                     else config.toProxyUri()
                     db.localServerDao().insert(
                         LocalServer(
                             displayName  = config.name,
-                            encryptedUri = encryptedUri,
+                            encryptedUri = uriToStore,
                             expiresAt    = expiresAt,
+                            isLocked     = config.locked,
+                            configJson   = if (!config.locked) config.toJson() else "",
                         )
                     )
                 }
@@ -145,31 +147,19 @@ class ConfigExportDialog : BottomSheetDialogFragment() {
         }
     }
 
-    // ── Lock / Unlock sensitive fields ────────────────────────────────────────
+    // ── Lock / Unlock status label ────────────────────────────────────────────
 
-    private fun updateLockUi(
-        etUuid: TextInputEditText,
-        etSni: TextInputEditText,
-        etHost: TextInputEditText,
-        etPath: TextInputEditText,
-        tvLockStatus: TextView,
-        locked: Boolean
-    ) {
+    private fun updateLockUi(tvLockStatus: TextView, locked: Boolean) {
         if (locked) {
-            tvLockStatus.text = "🔒 مشفر (Locked)"
+            tvLockStatus.text = "كونفيغ مغلق"
             tvLockStatus.setTextColor(0xFF00F2FE.toInt())
-            // Show lock hints on sensitive fields
-            etUuid.hint = getString(R.string.locked_field)
-            etSni.hint  = getString(R.string.locked_field)
         } else {
-            tvLockStatus.text = "🔓 مكشوف (Unlocked)"
+            tvLockStatus.text = "UNLOCKED CONFIG"
             tvLockStatus.setTextColor(0xFFFFCC00.toInt())
-            etUuid.hint = "UUID / Password"
-            etSni.hint  = "SNI (TLS Server Name)"
         }
     }
 
-    // ── Config builder (shared by Export & Connect Directly) ──────────────────
+    // ── Config builder (shared by Export & اتصال مباشر) ──────────────────────
 
     private fun buildConfig(
         etName: TextInputEditText,

@@ -1,35 +1,31 @@
 ---
 name: Boykta VPN UI overhaul
-description: Key decisions from the full UI/UX + routing overhaul of Boykta VPN app.
+description: Full redesign + engine fixes applied in the v3 pass — lifecycle fix, real pings, test server, locked/unlocked system.
 ---
 
-# Boykta VPN UI Overhaul
+# Boykta VPN UI/Engine Overhaul (v3)
 
-## What was changed
+## Key decisions
 
-- activity_main.xml: Complete redesign — single server card + glowing circular connect button + speed counters + bottom action bar (5 buttons: Update, Logs, Key, Telegram, Exit)
-- MainActivity.kt: Full rewrite for new single-card UI; no RecyclerView for servers anymore
-- MainViewModel.kt: Added `startAutoPing()` / `stopAutoPing()` — 1-second coroutine loop using LatencyChecker targeting dns.google
-- XrayManager.kt: Removed ALL geosite/geoip routing rules (were causing "stat /system/bin/geosite.dat: no such file" crash). Routing is now pure IP-based with simple rules only. domainStrategy = "AsIs".
-- ServerSelectSheet.kt: New BottomSheetDialogFragment with search bar + radio checkmarks
-- ConfigExportDialog.kt: Added "CONNECT DIRECTLY" button next to Export; locked mode shows [ENCRYPTED & LOCKED] hint on sensitive fields
-- Icons: Generated via pure-Python PNG writer (no PIL needed); also added adaptive icon XMLs in mipmap-anydpi-v26/
+**XrayManager forceStop():** Always call `XrayManager.forceStop()` before any `start()` call to prevent "xray is already running" crashes. The `forceStop()` method sends the stop command unconditionally regardless of the internal `xrayRunning` flag.
 
-## Critical decisions
+**TunnelPingChecker — SOCKS5 routing:** App traffic is excluded from the VPN TUN interface via `addDisallowedApplication(packageName)`. To validate the tunnel, `TunnelPingChecker` must connect explicitly through the SOCKS5 proxy (`127.0.0.1:10808`) using `url.openConnection(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort)))`. This guarantees the ping actually travels through Xray-core. Plain `url.openConnection()` from the app process bypasses the tunnel.
 
-**Why removed geosite/geoip:** The libXray.aar in this project doesn't bundle the .dat files. Any routing rule that references geosite: or geoip: causes a fatal crash at startup. The fix is to use only IP-range rules in routing.
+**Why `Collections.list()`:** `NetworkInterface.getNetworkInterfaces()` returns `Enumeration<NetworkInterface>`. Using `.toList()` causes Kotlin overload resolution ambiguity — must use `Collections.list(enumeration)` with explicit type annotation `List<NetworkInterface>`.
 
-**Why single server card instead of RecyclerView:** Spec requirement — only one card visible at a time; tapping opens BottomSheetDialog for selection.
+**Built-in test server:** Gated behind `BuildConfig.DEBUG` only — never ships in release APK. Parameters are provided by the operator at development time. Connection details must NOT be stored in memory — see secrets policy.
 
-**Why 1-second ping:** Spec requirement for "live ping badge". LatencyChecker makes a HEAD request to https://dns.google; result updates tvPingBadge on main card.
+**Locked/Unlocked config system:**
+- `LocalServer` entity bumped to version 2 with `isLocked: Boolean = true` and `configJson: String = ""`.
+- `Server` model adds `isLocked` + `configJson` fields.
+- `BoykConfigManager.importWithLockInfo()` returns `Pair<BoykConfig, Boolean>` to carry lock status.
+- `MainActivity.updateUnlockedPanel()` shows `cardUnlockedConfig` for servers where `isLocked=false`.
+- Locked local servers show "كونفيغ مغلق" protocol badge. Unlocked show "UNLOCKED".
 
-**How to apply:** If routing crashes return, check XrayManager.buildXrayConfig() — ensure no `geosite:` or `geoip:` strings appear in the JSONObject routing rules.
+**AES-256-GCM removal from UI:** All user-visible strings removed from `strings.xml`, `dialog_config_export.xml`, privacy policy text. Technical term replaced with "تشفير متقدم".
 
-## Build command
+**VLESS parser fix:** `buildStreamSettings` now uses `hostHeader` param (from `params["host"]`) separately from `sni`. Previously the `host` param was used for both WS headers and SNI which could conflict.
 
-```bash
-export JAVA_HOME=/nix/store/xad649j61kwkh0id5wvyiab5rliprp4d-openjdk-17.0.15+6/lib/openjdk
-export ANDROID_HOME=$HOME/android-sdk
-./gradlew assembleDebug
-```
-Output: `app/build/outputs/apk/debug/app-debug.apk` (~79 MB)
+## Build notes
+- Database version bumped 1→2; uses `fallbackToDestructiveMigration()` — existing local DB is wiped on upgrade (expected).
+- `fallbackToDestructiveMigration()` deprecation warning is safe to ignore in this project (no user migration path needed for dev builds).

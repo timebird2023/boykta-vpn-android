@@ -13,15 +13,29 @@
         android:orientation="vertical">
 
         <!-- Title -->
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🔑 منشئ ومصدّر الكونفيغ"
-            android:textColor="@color/primary"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            android:fontFamily="monospace"
-            android:layout_marginBottom="16dp" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_key"
+                app:tint="@color/primary"
+                android:contentDescription="config" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="  منشئ ومصدّر الكونفيغ"
+                android:textColor="@color/primary"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace" />
+        </LinearLayout>
 
         <!-- Protocol spinner -->
         <TextView
@@ -60,7 +74,7 @@
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Host / IP السيرفر الحقيقي"
+            android:hint="Target Server / IP"
             android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
@@ -94,7 +108,7 @@
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Host Header (CDN)"
+            android:hint="Header Host (CDN)"
             android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
@@ -145,7 +159,7 @@
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="WS Path (e.g. /vless)"
+            android:hint="Path (e.g. /vless)"
             android:layout_marginBottom="10dp"
             app:boxStrokeColor="@color/primary"
             app:hintTextColor="@color/primary">
@@ -252,7 +266,7 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="🔒 مشفر (Locked)"
+                android:text="كونفيغ مغلق"
                 android:textColor="@color/primary"
                 android:textSize="13sp"
                 android:fontFamily="monospace"
@@ -284,7 +298,7 @@
                 android:layout_height="52dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="6dp"
-                android:text="⚡ اتصال مباشر"
+                android:text="اتصال مباشر"
                 android:textColor="#000000"
                 android:textSize="11sp"
                 android:textStyle="bold"
@@ -297,7 +311,7 @@
                 android:layout_width="0dp"
                 android:layout_height="52dp"
                 android:layout_weight="1"
-                android:text="📤 تصدير"
+                android:text="تصدير"
                 android:textColor="#000000"
                 android:textSize="12sp"
                 android:textStyle="bold"
@@ -306,10 +320,11 @@
 
         </LinearLayout>
 
+        <!-- Info text — no algorithm names shown -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🔒 Locked = AES-256-GCM | 🔓 Unlocked = JSON قابل للقراءة"
+            android:text="مغلق = بيانات الاتصال مشفرة ومحمية | مكشوف = JSON قابل للقراءة"
             android:textColor="@color/text_disabled"
             android:textSize="10sp"
             android:fontFamily="monospace"

@@ -82,18 +82,25 @@ class BoykVpnService : VpnService() {
                     startForeground(NOTIFICATION_ID, buildNotification("جارٍ الاتصال…"))
                 }
 
-                VpnLogManager.sys("VpnService started")
-                VpnLogManager.info("Connecting to: ${server.name}")
+                // Log device hardware and Android version (real info)
+                TunnelPingChecker.logDeviceInfo()
+                VpnLogManager.sys("VpnService starting — target: ${server.name}")
 
-                // 1. Start Xray-core with the proxy config URI
+                // 1. Force-stop any stale Xray instance (prevents "already running" crash)
+                //    XrayManager.start() also calls forceStop(), but being explicit here
+                //    ensures the TUN interface is always opened fresh.
+                XrayManager.forceStop()
+                delay(200) // brief settle time
+
+                // 2. Start Xray-core with the proxy config URI
                 val xrayStarted = XrayManager.start(server.config, LOCAL_SOCKS_PORT, LOCAL_HTTP_PORT)
                 if (!xrayStarted) {
                     notifyError("فشل تشغيل محرك VPN")
-                    VpnLogManager.error("Xray engine failed to start")
+                    VpnLogManager.error("Xray engine failed to start — aborting")
                     return@launch
                 }
 
-                // 2. Build the TUN interface
+                // 3. Build the TUN interface
                 //    MTU 1500, DNS 8.8.8.8 + 1.1.1.1, route all IPv4 traffic
                 val tunPfd = Builder()
                     .setSession("Boykta VPN — ${server.name}")
@@ -110,29 +117,36 @@ class BoykVpnService : VpnService() {
                 isRunning    = true
                 isConnected.set(true)
 
-                VpnLogManager.success("TUN interface established (MTU 1500)")
+                VpnLogManager.success("TUN interface established (MTU 1500, addr 10.88.0.1/30)")
                 VpnLogManager.info("DNS: 8.8.8.8, 1.1.1.1 | Route: 0.0.0.0/0")
 
-                // 3. Start TUN → SOCKS5 bridge
+                // 4. Log real network interface assignments
+                TunnelPingChecker.logNetworkInterfaces()
+
+                // 5. Start TUN → SOCKS5 bridge
                 val bridge = TunBridge(tunPfd, LOCAL_SOCKS_PORT, this@BoykVpnService)
                 tunBridge = bridge
                 bridge.start()
 
-                VpnLogManager.success("Handshake established — internet routing active")
+                VpnLogManager.success("TUN→SOCKS5 bridge active — routing all traffic via proxy")
 
                 withContext(Dispatchers.Main) {
                     updateNotification("متصل: ${server.name}")
                     listeners.forEach { it.onConnected(server.name) }
                 }
 
-                // 4. Keep-alive: log traffic stats every 30 s
+                // 6. Initial real HTTP ping via SOCKS5 proxy to verify tunnel is working
+                delay(2_500) // give Xray time to fully initialize
+                TunnelPingChecker.pingAndLog(LOCAL_SOCKS_PORT)
+
+                // 7. Keep-alive: real HTTP ping every 30 s (via SOCKS5 proxy)
                 serviceScope.launch {
                     var ticks = 0
                     while (isConnected.get()) {
                         delay(30_000)
                         ticks++
                         if (XrayManager.isRunning()) {
-                            VpnLogManager.info("200 OK — tunnel alive (${ticks * 30}s)")
+                            TunnelPingChecker.pingAndLog(LOCAL_SOCKS_PORT)
                         } else {
                             VpnLogManager.warn("Xray core stopped unexpectedly — reconnecting…")
                             stopVpn()
@@ -159,7 +173,7 @@ class BoykVpnService : VpnService() {
             tunBridge?.stop()
             tunBridge = null
 
-            XrayManager.stop()
+            XrayManager.forceStop()
 
             try {
                 vpnInterface?.close()
@@ -168,7 +182,7 @@ class BoykVpnService : VpnService() {
                 Log.e(TAG, "Error closing VPN interface", e)
             }
 
-            VpnLogManager.sys("VpnService stopped")
+            VpnLogManager.sys("VpnService stopped — all tunnels closed")
 
             withContext(Dispatchers.Main) {
                 listeners.forEach { it.onDisconnected() }
@@ -243,6 +257,6 @@ class BoykVpnService : VpnService() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
-        XrayManager.stop()
+        XrayManager.forceStop()
     }
 }
