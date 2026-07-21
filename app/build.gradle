@@ -19,9 +19,9 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        // Include only arm64-v8a and x86_64 native libraries
+        // Support all architectures including armv7 for your device + modern ones
         ndk {
-            abiFilters 'arm64-v8a', 'x86_64'
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64'
         }
     }
 
