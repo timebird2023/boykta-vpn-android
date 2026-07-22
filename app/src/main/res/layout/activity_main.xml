@@ -62,7 +62,7 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:text="BOYKTA NET"
+                    android:text="BOYKTA VPN"
                     android:textColor="@color/primary"
                     android:textSize="17sp"
                     android:textStyle="bold"
@@ -364,7 +364,7 @@
                         android:textColor="@color/text_secondary"
                         android:textSize="11sp"
                         android:fontFamily="monospace" />
-                    <TextView
+                    <EditText
                         android:id="@+id/tvUnlockedHost"
                         android:layout_width="0dp"
                         android:layout_weight="1"
@@ -372,6 +372,12 @@
                         android:textColor="@color/text_primary"
                         android:textSize="11sp"
                         android:fontFamily="monospace"
+                        android:background="@android:color/transparent"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:inputType="textUri"
+                        android:singleLine="true"
+                        android:textCursorDrawable="@null"
                         tools:text="boykta2-100891635133.europe-west1.run.app" />
                 </LinearLayout>
 
@@ -388,7 +394,7 @@
                         android:textColor="@color/text_secondary"
                         android:textSize="11sp"
                         android:fontFamily="monospace" />
-                    <TextView
+                    <EditText
                         android:id="@+id/tvUnlockedPath"
                         android:layout_width="0dp"
                         android:layout_weight="1"
@@ -396,6 +402,12 @@
                         android:textColor="@color/text_primary"
                         android:textSize="11sp"
                         android:fontFamily="monospace"
+                        android:background="@android:color/transparent"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:inputType="text"
+                        android:singleLine="true"
+                        android:textCursorDrawable="@null"
                         tools:text="/boykta" />
                 </LinearLayout>
 
@@ -412,7 +424,7 @@
                         android:textColor="@color/text_secondary"
                         android:textSize="11sp"
                         android:fontFamily="monospace" />
-                    <TextView
+                    <EditText
                         android:id="@+id/tvUnlockedSni"
                         android:layout_width="0dp"
                         android:layout_weight="1"
@@ -420,6 +432,12 @@
                         android:textColor="@color/text_primary"
                         android:textSize="11sp"
                         android:fontFamily="monospace"
+                        android:background="@android:color/transparent"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:inputType="textUri"
+                        android:singleLine="true"
+                        android:textCursorDrawable="@null"
                         tools:text="youtube.com" />
                 </LinearLayout>
 
@@ -435,7 +453,7 @@
                         android:textColor="@color/text_secondary"
                         android:textSize="11sp"
                         android:fontFamily="monospace" />
-                    <TextView
+                    <EditText
                         android:id="@+id/tvUnlockedHostHeader"
                         android:layout_width="0dp"
                         android:layout_weight="1"
@@ -443,8 +461,12 @@
                         android:textColor="@color/text_primary"
                         android:textSize="11sp"
                         android:fontFamily="monospace"
-                        android:ellipsize="end"
-                        android:maxLines="1"
+                        android:background="@android:color/transparent"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:inputType="textUri"
+                        android:singleLine="true"
+                        android:textCursorDrawable="@null"
                         tools:text="boykta2-100891635133.europe-west1.run.app" />
                 </LinearLayout>
 
@@ -454,7 +476,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="38dp"
                     android:layout_marginTop="12dp"
-                    android:text="إعادة الاتصال"
+                    android:text="حفظ وإعادة الاتصال"
                     android:textColor="@color/background"
                     android:textSize="12sp"
                     android:fontFamily="monospace"
@@ -738,7 +760,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="BOYKTA NET"
+                android:text="BOYKTA VPN"
                 android:textColor="#00F2FE"
                 android:textSize="18sp"
                 android:textStyle="bold"
@@ -749,7 +771,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="v1.0 — boykta net"
+                android:text="v1.0 — boykta vpn"
                 android:textColor="#6B7FA8"
                 android:textSize="11sp"
                 android:fontFamily="monospace"

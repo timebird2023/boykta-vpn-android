@@ -81,7 +81,10 @@ class BoykVpnService : VpnService() {
     private val serviceScope  = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // Tracked so it can be cancelled before teardown
-    private var keepAliveJob  : Job? = null
+    private var keepAliveJob      : Job? = null
+    // Tracks the in-flight network-change coroutine so stale ones can be cancelled
+    // before a reconnect completes — prevents re-triggering a new reconnect loop.
+    private var networkChangeJob  : Job? = null
 
     private val listeners      = mutableListOf<VpnStateListener>()
     private var networkMonitor : NetworkMonitor? = null
@@ -197,11 +200,16 @@ class BoykVpnService : VpnService() {
                 networkMonitor = NetworkMonitor(
                     context        = this@BoykVpnService,
                     onNetworkAvailable = {
-                        serviceScope.launch {
+                        // Cancel any previous stale network-change coroutine.
+                        // Without this, a stale job launched before the last reconnect
+                        // can fire after the new session starts (isConnected=true,
+                        // isReconnecting=false) and trigger an unwanted second reconnect.
+                        networkChangeJob?.cancel()
+                        networkChangeJob = serviceScope.launch {
                             if (isConnected.get() && !isReconnecting.get()) {
                                 VpnLogManager.info("Network changed — re-establishing tunnel…")
-                                // Let the new network fully stabilize
-                                delay(4_000)
+                                // Let the new physical network fully stabilize
+                                delay(5_000)
                                 if (isConnected.get() && !isReconnecting.get()) {
                                     triggerAutoReconnect("network change")
                                 }
@@ -323,9 +331,11 @@ class BoykVpnService : VpnService() {
             // ① Set quiet mode BEFORE stopping anything — suppress stale errors
             VpnLogManager.isReconnecting.set(true)
 
-            // ② Cancel keep-alive loop BEFORE teardown
+            // ② Cancel keep-alive loop AND network-change job BEFORE teardown
             keepAliveJob?.cancel()
             keepAliveJob = null
+            networkChangeJob?.cancel()
+            networkChangeJob = null
 
             // ③ Tear down tunnel
             isRunning = false
@@ -361,6 +371,8 @@ class BoykVpnService : VpnService() {
 
             keepAliveJob?.cancel()
             keepAliveJob = null
+            networkChangeJob?.cancel()
+            networkChangeJob = null
 
             networkMonitor?.stop()
             networkMonitor = null

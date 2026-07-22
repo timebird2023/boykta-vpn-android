@@ -321,17 +321,23 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         // Server card → open bottom sheet
         cardSelectedServer.setOnClickListener { openServerSelectSheet() }
 
-        // Reconnect (unlocked config panel)
+        // Save & Reconnect (unlocked config panel — reads EditText values and rebuilds URI)
         btnReconnect.setOnClickListener {
             val server = viewModel.selectedServer.value ?: return@setOnClickListener
+            // Rebuild URI from whatever the user typed into the EditText fields
+            val editedServer = rebuildServerWithEditedParams(server) ?: server
+            if (editedServer !== server) {
+                viewModel.selectServer(editedServer)
+                showSnack("تم حفظ الإعدادات — جارِ الاتصال…")
+            }
             if (isVpnConnected) {
                 disconnectVpn()
                 lifecycleScope.launch {
                     delay(800)
-                    requestVpnPermissionAndConnect(server)
+                    requestVpnPermissionAndConnect(editedServer)
                 }
             } else {
-                requestVpnPermissionAndConnect(server)
+                requestVpnPermissionAndConnect(editedServer)
             }
         }
 
@@ -862,6 +868,91 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
             connection,
             Context.BIND_AUTO_CREATE
         )
+    }
+
+    // ── Config URI rebuild (Save & Reconnect) ─────────────────────────────────
+
+    /**
+     * Reads the four EditText fields in the unlocked config panel and rebuilds
+     * the proxy URI with the updated values while preserving UUID/password.
+     * Returns null if nothing meaningful changed or if the server type is unsupported.
+     */
+    private fun rebuildServerWithEditedParams(server: Server): Server? {
+        return try {
+            val newHost = tvUnlockedHost.text.toString().trim().takeIf { it.isNotBlank() } ?: return null
+            val newPath = tvUnlockedPath.text.toString().trim().ifBlank { "/" }
+            val newSni  = tvUnlockedSni.text.toString().trim().ifBlank { newHost }
+            val newHdr  = tvUnlockedHostHeader.text.toString().trim().ifBlank { newHost }
+
+            val rebuiltUri = when {
+                server.config.startsWith("vless://")  -> rebuildVlessUri(server.config,  newHost, newPath, newSni, newHdr)
+                server.config.startsWith("trojan://") -> rebuildTrojanUri(server.config, newHost, newPath, newSni, newHdr)
+                else -> return null
+            } ?: return null
+
+            if (rebuiltUri == server.config) return null  // nothing changed
+            server.copy(config = rebuiltUri)
+        } catch (_: Exception) { null }
+    }
+
+    private fun rebuildVlessUri(original: String, host: String, path: String, sni: String, hdr: String): String? {
+        return try {
+            val afterScheme = original.removePrefix("vless://")
+            val atIdx = afterScheme.indexOf('@')
+            val uuid = afterScheme.substring(0, atIdx)
+            val rest = afterScheme.substring(atIdx + 1)
+            val qIdx = rest.indexOf('?')
+            val hashIdx = rest.indexOf('#')
+            val oldHostPort = if (qIdx != -1) rest.substring(0, qIdx)
+                              else rest.substring(0, if (hashIdx != -1) hashIdx else rest.length)
+            val oldPort = oldHostPort.substringAfterLast(':')
+            val queryStr = if (qIdx != -1) {
+                val end = if (hashIdx != -1 && hashIdx > qIdx) hashIdx else rest.length
+                rest.substring(qIdx + 1, end)
+            } else ""
+            val name = if (hashIdx != -1) rest.substring(hashIdx + 1) else ""
+            val params = if (queryStr.isBlank()) mutableMapOf()
+                         else queryStr.split("&").associate { kv ->
+                             val p = kv.split("=", limit = 2)
+                             p[0] to if (p.size > 1) p[1] else ""
+                         }.toMutableMap()
+            params["sni"]  = java.net.URLEncoder.encode(sni,  "UTF-8")
+            params["host"] = java.net.URLEncoder.encode(hdr,  "UTF-8")
+            params["path"] = java.net.URLEncoder.encode(path, "UTF-8")
+            val newQuery = params.entries.joinToString("&") { "${it.key}=${it.value}" }
+            val nameStr  = if (name.isNotBlank()) "#${java.net.URLEncoder.encode(name, "UTF-8")}" else ""
+            "vless://$uuid@$host:$oldPort?$newQuery$nameStr"
+        } catch (_: Exception) { null }
+    }
+
+    private fun rebuildTrojanUri(original: String, host: String, path: String, sni: String, hdr: String): String? {
+        return try {
+            val withoutScheme = original.removePrefix("trojan://")
+            val atIdx = withoutScheme.indexOf('@')
+            val password = withoutScheme.substring(0, atIdx)
+            val rest = withoutScheme.substring(atIdx + 1)
+            val qIdx = rest.indexOf('?')
+            val hashIdx = rest.indexOf('#')
+            val oldHostPort = if (qIdx != -1) rest.substring(0, qIdx)
+                              else rest.substring(0, if (hashIdx != -1) hashIdx else rest.length)
+            val oldPort = oldHostPort.substringAfterLast(':')
+            val queryStr = if (qIdx != -1) {
+                val end = if (hashIdx != -1 && hashIdx > qIdx) hashIdx else rest.length
+                rest.substring(qIdx + 1, end)
+            } else ""
+            val name = if (hashIdx != -1) rest.substring(hashIdx + 1) else ""
+            val params = if (queryStr.isBlank()) mutableMapOf()
+                         else queryStr.split("&").associate { kv ->
+                             val p = kv.split("=", limit = 2)
+                             p[0] to if (p.size > 1) p[1] else ""
+                         }.toMutableMap()
+            params["sni"]  = java.net.URLEncoder.encode(sni,  "UTF-8")
+            params["host"] = java.net.URLEncoder.encode(hdr,  "UTF-8")
+            params["path"] = java.net.URLEncoder.encode(path, "UTF-8")
+            val newQuery = params.entries.joinToString("&") { "${it.key}=${it.value}" }
+            val nameStr  = if (name.isNotBlank()) "#${java.net.URLEncoder.encode(name, "UTF-8")}" else ""
+            "trojan://$password@$host:$oldPort?$newQuery$nameStr"
+        } catch (_: Exception) { null }
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

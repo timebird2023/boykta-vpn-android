@@ -20,7 +20,7 @@
         android:id="@+id/splashTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="BOYKTA NET"
+        android:text="BOYKTA VPN"
         android:textColor="@color/primary"
         android:textSize="28sp"
         android:textStyle="bold"

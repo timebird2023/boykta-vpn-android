@@ -95,6 +95,14 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 - **Android SDK**: `~/android-sdk/` — platforms/android-35, build-tools/35.0.1
 - **local.properties**: `sdk.dir=/home/runner/android-sdk`
 - **libXray.aar**: NOT present — VPN engine starts Xray inbounds but TUN→SOCKS5 bridge requires the .aar for native routing. Place in `app/libs/` to enable full device-wide VPN.
+- **SDK License fix**: If Gradle complains about licenses, manually write all hashes to `~/android-sdk/licenses/android-sdk-license` (see memory file `android-build-setup.md`).
+
+## Latest Changes (July 2026)
+
+- ✅ **Branding**: All "BOYKTA NET" → "BOYKTA VPN" (activity_main.xml ×3, activity_splash.xml, dialog_privacy_policy.xml)
+- ✅ **False reconnect loop fix**: Added `networkChangeJob` tracking in `BoykVpnService.kt` — stale coroutines from old sessions are cancelled before reconnect completes, preventing double-reconnect loops
+- ✅ **Ping reliability fix**: `TunnelPingChecker.kt` replaced HTTPS-through-SOCKS5 ping (caused SSLHandshakeException/SocketTimeout with Trojan) with plain TCP probe to 1.1.1.1:80 through SOCKS5 — no TLS overhead, no false failures
+- ✅ **Unlocked config editing**: The 4 param fields (Target/Path/SNI/Host Header) in the unlocked config panel are now EditText — users can edit inline. "Save & Reconnect" button rebuilds the VLESS/Trojan URI with updated values while preserving UUID/password
 
 ## User Preferences
 
