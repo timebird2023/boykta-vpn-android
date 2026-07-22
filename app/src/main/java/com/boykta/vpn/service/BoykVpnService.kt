@@ -16,6 +16,7 @@ import com.boykta.vpn.R
 import com.boykta.vpn.model.Server
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * VPN foreground service.
@@ -27,7 +28,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     3. Establish TUN interface (MTU 1500, DNS 8.8.8.8/1.1.1.1, route 0.0.0.0/0)
  *     4. Start TunBridge (bidirectional TUN ↔ SOCKS5 relay)
  *     5. Initial ping check after 2.5 s
- *     6. Keep-alive ping every 30 s
+ *     6. Keep-alive ping every PING_INTERVAL_MS
+ *     7. Auto-reconnect after MAX_PING_FAILS consecutive failures
+ *     8. NetworkMonitor triggers re-establish on Wi-Fi ↔ cellular switch
  */
 class BoykVpnService : VpnService() {
 
@@ -43,19 +46,28 @@ class BoykVpnService : VpnService() {
         const val LOCAL_SOCKS_PORT  = 10808
         const val LOCAL_HTTP_PORT   = 10809
 
+        // Keep-alive tuning
+        private const val PING_INTERVAL_MS    = 15_000L   // ping every 15 s
+        private const val MAX_PING_FAILS      = 3          // auto-reconnect after 3 misses
+        private const val RECONNECT_BASE_MS   = 3_000L     // initial backoff
+        private const val RECONNECT_MAX_MS    = 30_000L    // cap at 30 s
+
         /** True while a VPN session is active (read from other components). */
         @Volatile var isRunning = false
             private set
     }
 
-    private val binder       = LocalBinder()
-    private var vpnInterface : ParcelFileDescriptor? = null
-    private var tunBridge    : TunBridge? = null
-    private var currentServer: Server? = null
-    private val isConnected  = AtomicBoolean(false)
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val binder        = LocalBinder()
+    private var vpnInterface  : ParcelFileDescriptor? = null
+    private var tunBridge     : TunBridge? = null
+    private var currentServer : Server? = null
+    private val isConnected   = AtomicBoolean(false)
+    private val isReconnecting= AtomicBoolean(false)
+    private val reconnectCount= AtomicInteger(0)
+    private val serviceScope  = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private val listeners = mutableListOf<VpnStateListener>()
+    private val listeners      = mutableListOf<VpnStateListener>()
+    private var networkMonitor : NetworkMonitor? = null
 
     interface VpnStateListener {
         fun onConnected(serverName: String)
@@ -98,31 +110,26 @@ class BoykVpnService : VpnService() {
 
                 // ── Step 0: Log device + system environment ───────────────────
                 TunnelPingChecker.logDeviceInfo()
-                VpnLogManager.sys("VpnService starting → ${server.name}")
-                VpnLogManager.sys("Protocol: ${server.protocol.uppercase()} | Config len: ${server.config.length} chars")
+                VpnLogManager.sys("━━━━━━━━ VPN SESSION START ━━━━━━━━")
+                VpnLogManager.sys("Server   : ${server.name}")
+                VpnLogManager.sys("Protocol : ${server.protocol.uppercase()}")
 
                 // ── Step 1: Stop any stale Xray instance ─────────────────────
                 XrayManager.forceStop()
 
-                // Wait for port 10808 to be released (up to 3 s)
                 val portFree = waitForPort(LOCAL_SOCKS_PORT, timeoutMs = 3_000)
-                if (!portFree) {
-                    VpnLogManager.warn("Port $LOCAL_SOCKS_PORT still in use — proceeding anyway")
-                }
+                if (!portFree) VpnLogManager.warn("Port $LOCAL_SOCKS_PORT still in use — proceeding")
 
                 // ── Step 2: Start Xray-core ───────────────────────────────────
                 val xrayOk = XrayManager.start(server.config, LOCAL_SOCKS_PORT, LOCAL_HTTP_PORT)
                 if (!xrayOk) {
                     notifyError("فشل تشغيل محرك VPN")
-                    VpnLogManager.error("Xray engine failed to start — aborting connection")
+                    VpnLogManager.error("Xray engine failed to start — aborting")
                     return@launch
                 }
+                VpnLogManager.success("Xray core started → SOCKS5 :$LOCAL_SOCKS_PORT")
 
                 // ── Step 3: Establish TUN interface ───────────────────────────
-                //   MTU 1500, virtual address 10.88.0.1/30
-                //   DNS: 8.8.8.8 + 1.1.1.1
-                //   Route 0.0.0.0/0 — ALL IPv4 traffic through TUN
-                //   Exclude our own app to prevent routing loop
                 val tunPfd = Builder()
                     .setSession("Boykta VPN — ${server.name}")
                     .setMtu(1500)
@@ -130,58 +137,144 @@ class BoykVpnService : VpnService() {
                     .addDnsServer("8.8.8.8")
                     .addDnsServer("1.1.1.1")
                     .addRoute("0.0.0.0", 0)
-                    .addDisallowedApplication(packageName)  // exempt our own traffic → no loop
+                    .addDisallowedApplication(packageName)
                     .establish()
                     ?: throw IllegalStateException("VPN permission revoked or TUN establish failed")
 
                 vpnInterface = tunPfd
                 isRunning    = true
                 isConnected.set(true)
+                reconnectCount.set(0)   // reset on clean connect
 
-                VpnLogManager.success("TUN interface established → addr 10.88.0.1/30, MTU 1500")
-                VpnLogManager.info("DNS 8.8.8.8 | 1.1.1.1   Route 0.0.0.0/0")
-
-                // ── Step 4: Log active network interfaces ─────────────────────
+                VpnLogManager.success("TUN interface ready → 10.88.0.1/30  MTU 1500")
+                VpnLogManager.info("DNS 8.8.8.8 + 1.1.1.1   Route 0.0.0.0/0")
                 TunnelPingChecker.logNetworkInterfaces()
 
-                // ── Step 5: Start TUN ↔ SOCKS5 bidirectional bridge ──────────
+                // ── Step 4: Start TUN ↔ SOCKS5 bridge ────────────────────────
                 val bridge = TunBridge(tunPfd, LOCAL_SOCKS_PORT, this@BoykVpnService)
                 tunBridge = bridge
                 bridge.start()
-                VpnLogManager.success("TUN↔SOCKS5 bridge active — all traffic routed through proxy")
+                VpnLogManager.success("TUN↔SOCKS5 bridge active — traffic routing through proxy")
 
-                // ── Step 6: Notify UI ─────────────────────────────────────────
+                // ── Step 5: Notify UI ─────────────────────────────────────────
                 withContext(Dispatchers.Main) {
                     updateNotification("متصل: ${server.name}")
                     listeners.forEach { it.onConnected(server.name) }
                 }
 
-                // ── Step 7: First ping check (give Xray 2.5 s to fully init) ─
+                // ── Step 6: Start network change listener ─────────────────────
+                networkMonitor?.stop()
+                networkMonitor = NetworkMonitor(
+                    context        = this@BoykVpnService,
+                    onNetworkAvailable = {
+                        // Network restored or switched → re-establish tunnel
+                        serviceScope.launch {
+                            if (isConnected.get() && !isReconnecting.get()) {
+                                VpnLogManager.info("Network changed — re-establishing tunnel…")
+                                delay(2_000) // let the new network stabilize
+                                if (!isReconnecting.get()) triggerAutoReconnect("network change")
+                            }
+                        }
+                    },
+                    onNetworkLost = {
+                        if (isConnected.get()) VpnLogManager.warn("Internet connection lost — waiting for recovery…")
+                    }
+                )
+                networkMonitor?.start()
+
+                // ── Step 7: Initial ping (give Xray 2.5 s to fully init) ──────
                 delay(2_500)
                 TunnelPingChecker.pingAndLog(LOCAL_SOCKS_PORT)
 
-                // ── Step 8: Keep-alive ping every 30 s ───────────────────────
+                // ── Step 8: Keep-alive ping every PING_INTERVAL_MS ───────────
                 serviceScope.launch {
+                    var failCount = 0
                     while (isConnected.get()) {
-                        delay(30_000)
+                        delay(PING_INTERVAL_MS)
                         if (!isConnected.get()) break
-                        if (XrayManager.isRunning()) {
-                            TunnelPingChecker.pingAndLog(LOCAL_SOCKS_PORT)
-                        } else {
-                            VpnLogManager.warn("Xray core stopped unexpectedly — disconnecting")
-                            stopVpn()
+
+                        // First: quick TCP probe — is Xray even listening?
+                        val proxyAlive = TunnelPingChecker.isProxyAlive(LOCAL_SOCKS_PORT)
+                        if (!proxyAlive) {
+                            VpnLogManager.warn("[WARN] Xray proxy not responding — crash detected")
+                            triggerAutoReconnect("Xray crash")
                             break
+                        }
+
+                        // Also verify Xray's own internal state
+                        if (!XrayManager.isRunning()) {
+                            VpnLogManager.warn("[WARN] Xray core stopped unexpectedly")
+                            triggerAutoReconnect("Xray stopped")
+                            break
+                        }
+
+                        // Full HTTPS tunnel ping
+                        val ok = TunnelPingChecker.pingAndLog(LOCAL_SOCKS_PORT)
+                        if (ok) {
+                            failCount = 0
+                        } else {
+                            failCount++
+                            val remaining = MAX_PING_FAILS - failCount
+                            if (remaining > 0) {
+                                VpnLogManager.warn("[WARN] Tunnel check failed ($failCount/$MAX_PING_FAILS) — retrying…")
+                            } else {
+                                VpnLogManager.warn("[WARN] Tunnel unresponsive after $MAX_PING_FAILS checks — auto-recovery…")
+                                triggerAutoReconnect("ping timeout × $MAX_PING_FAILS")
+                                break
+                            }
                         }
                     }
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "VPN startup failed", e)
-                VpnLogManager.error("Connection failed: ${e.message}")
-                VpnLogManager.error("Stack: ${e.stackTraceToString().take(400)}")
-                notifyError("فشل الاتصال: ${e.message}")
+                // Clean error message — no raw stack trace shown to user
+                VpnLogManager.error("[ERROR] Connection failed: ${e.javaClass.simpleName} — ${e.message?.take(120)}")
+                notifyError("فشل الاتصال: ${e.message?.take(80)}")
                 stopVpn()
             }
+        }
+    }
+
+    // ── Auto-reconnect ────────────────────────────────────────────────────────
+
+    /**
+     * Gracefully tears down the current tunnel and re-establishes it with
+     * exponential backoff. Safe to call from any coroutine.
+     */
+    private fun triggerAutoReconnect(reason: String) {
+        if (!isReconnecting.compareAndSet(false, true)) return  // already in progress
+
+        serviceScope.launch {
+            val server = currentServer ?: run {
+                isReconnecting.set(false)
+                return@launch
+            }
+
+            val attempt = reconnectCount.incrementAndGet()
+            val backoffMs = minOf(
+                RECONNECT_BASE_MS * (1L shl (attempt - 1).coerceAtMost(4)),
+                RECONNECT_MAX_MS
+            )
+
+            VpnLogManager.sys("━━━ AUTO-RECONNECT #$attempt (reason: $reason) ━━━")
+            VpnLogManager.sys("Waiting ${backoffMs / 1000}s before retry…")
+
+            // Tear down without calling stopVpn() (that would notify onDisconnected)
+            isRunning = false
+            isConnected.set(false)
+            networkMonitor?.stop()
+            tunBridge?.stop(); tunBridge = null
+            XrayManager.forceStop()
+            try { vpnInterface?.close(); vpnInterface = null } catch (_: Exception) {}
+
+            withContext(Dispatchers.Main) {
+                updateNotification("إعادة الاتصال… (محاولة $attempt)")
+            }
+
+            delay(backoffMs)
+            isReconnecting.set(false)
+            startVpn(server)
         }
     }
 
@@ -191,6 +284,11 @@ class BoykVpnService : VpnService() {
         serviceScope.launch {
             isRunning = false
             isConnected.set(false)
+            isReconnecting.set(false)
+            reconnectCount.set(0)
+
+            networkMonitor?.stop()
+            networkMonitor = null
 
             tunBridge?.stop()
             tunBridge = null
@@ -235,20 +333,11 @@ class BoykVpnService : VpnService() {
 
     // ── Port availability check ───────────────────────────────────────────────
 
-    /**
-     * Polls [port] on 127.0.0.1 until it accepts a new ServerSocket bind (i.e. is free),
-     * or until [timeoutMs] elapses. Returns true if port was confirmed free.
-     */
     private suspend fun waitForPort(port: Int, timeoutMs: Long): Boolean = withContext(Dispatchers.IO) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val free = try {
-                java.net.ServerSocket(port).use { true }
-            } catch (_: Exception) { false }
-            if (free) {
-                VpnLogManager.sys("Port $port confirmed free")
-                return@withContext true
-            }
+            val free = try { java.net.ServerSocket(port).use { true } } catch (_: Exception) { false }
+            if (free) { VpnLogManager.sys("Port $port confirmed free"); return@withContext true }
             delay(150)
         }
         false
@@ -259,10 +348,7 @@ class BoykVpnService : VpnService() {
     private fun createNotificationChannel() {
         val ch = NotificationChannel(
             CHANNEL_ID, "Boykta VPN", NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = "حالة اتصال Boykta VPN"
-            setShowBadge(false)
-        }
+        ).apply { description = "حالة اتصال Boykta VPN"; setShowBadge(false) }
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
     }
 

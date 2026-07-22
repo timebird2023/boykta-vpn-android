@@ -251,11 +251,11 @@ class TunBridge(
         suspend fun connect() = withContext(Dispatchers.IO) {
             vpnService.protect(socket)
             socket.connect(InetSocketAddress("127.0.0.1", socksPort), 6_000)
-            socket.soTimeout = 0
-            socket.tcpNoDelay = true
-            // Larger socket buffers for better throughput
-            socket.receiveBufferSize = 131072
-            socket.sendBufferSize    = 131072
+            socket.soTimeout         = 0          // blocking reads — no idle timeout
+            socket.tcpNoDelay        = true       // disable Nagle for low latency
+            socket.keepAlive         = true       // OS-level TCP keep-alive — prevents NAT/ISP from silently killing idle connections
+            socket.receiveBufferSize = 131072     // 128 KB receive buffer
+            socket.sendBufferSize    = 131072     // 128 KB send buffer
 
             val inp = socket.getInputStream()
             val out = socket.getOutputStream()

@@ -1,46 +1,64 @@
 ---
-name: Boykta VPN core bugs fixed (July 2026)
-description: Root-cause fixes for TCP data stalling, UI state mismatch, bad base-64 crash, and latency routing.
+name: Boykta VPN core stability fixes (July 2026)
+description: All root-cause fixes applied: TCP stall, UI sync, bad-base64, latency routing, auto-reconnect, network monitor, keep-alive.
 ---
 
-# Boykta VPN — Critical Bug Fixes (July 2026)
+# Boykta VPN — Core Stability Fixes
 
 ## TCP Data Stalling (TunBridge)
+**Rule:** `TcpSession.onData()` MUST send standalone ACK before forwarding to proxy.
+**Why:** Device TCP send-window fills (65KB) without ACKs — relay logs show active but no traffic.
+**How:** Send `FLAG_ACK` packet synchronously in `onData()` before `toProxy.trySend`.
 
-**Rule:** `TcpSession.onData()` MUST send a standalone ACK (FLAG_ACK, no payload) to the device synchronously before forwarding data to the SOCKS5 proxy.
+## Socket Keep-Alive (TunBridge)
+**Rule:** Always set `socket.keepAlive = true` on SOCKS5 sockets in TcpSession.connect().
+**Why:** ISP/NAT silently kills idle VPN connections. OS-level TCP probes keep them alive.
 
-**Why:** Without immediate ACKs the device's TCP send-window (65 KB) fills up and it stops transmitting — the relay logs show active connections but no real traffic flows (Telegram/browsers silent).
-
-**How to apply:** Always send ACK in `onData` BEFORE `toProxy.trySend`. Use `FLAG_PSH or FLAG_ACK` on proxy→device data packets (not just `FLAG_ACK`) for push notification.
-
-## TCP Buffer Sizing
-
-**Rule:** Proxy→device read buffer should be 64 KB (not MTU−40). Socket buffers set to 128 KB. Channel capacity 1024.
-
-**Why:** Small read buffer serializes large downloads into many small packets, hurting throughput.
+## Socket Buffers
+**Rule:** `receiveBufferSize = sendBufferSize = 131072` (128 KB), read buffer 64 KB.
+**Why:** Small buffers serialize downloads into many small packets, hurting throughput.
 
 ## UI State Sync after Service Rebind
-
-**Rule:** In `ServiceConnection.onServiceConnected`, after `addListener`, check `BoykVpnService.isRunning` and call `updateConnectUi(true)` if true.
-
-**Why:** When app is relaunched while VPN is running, `onConnected()` fires before `addListener` — the new Activity never gets the callback. This causes the "غير متصل" display even when tunnel is active.
+**Rule:** In `ServiceConnection.onServiceConnected`, check `BoykVpnService.isRunning` → call `updateConnectUi(true)`.
+**Why:** `onConnected()` fires before `addListener` on activity recreate → "غير متصل" with active VPN.
 
 ## bad base-64 Toast
-
-**Rule:** In `startVpnConnection`, use `server.isLocked` to decide whether to decrypt — NOT `CryptoHelper.isEncrypted()`.
-
-**Why:** `isEncrypted("vless://...")` returns `true` because the URI doesn't start with `{`. Then `decrypt("vless://...")` throws "bad base-64". The fix is gating on `server.isLocked` AND fixing `isEncrypted` to skip known URI schemes.
+**Rule:** Gate decryption on `server.isLocked`, NOT `CryptoHelper.isEncrypted()`.
+**Why:** `isEncrypted("vless://...")` returns true (doesn't start with `{`) → decrypt() throws.
 
 ## CryptoHelper.isEncrypted() URI Schemes
-
-**Rule:** `isEncrypted` must return `false` for strings starting with `vless://`, `trojan://`, `vmess://`, `ss://`, `http://`, `https://`.
+**Rule:** Return false for vless://, trojan://, vmess://, ss://, http://, https://.
 
 ## LatencyChecker VPN Routing
+**Rule:** When `BoykVpnService.isRunning`, route ping through `Proxy(SOCKS, 127.0.0.1:10808)`.
+**Why:** `addDisallowedApplication` exempts own app from TUN — direct ping bypasses tunnel.
 
-**Rule:** When `BoykVpnService.isRunning == true`, route latency ping through `Proxy(SOCKS, 127.0.0.1:10808)` using `connectivitycheck.gstatic.com/generate_204`. Direct otherwise.
+## Ping Timeout
+**Rule:** `HTTPS_TIMEOUT_MS = 12_000` (was 8000). High-latency VPN servers need more time.
+**Why:** 4108ms pings observed in logs — 8s is sometimes not enough for TLS round-trip.
 
-**Why:** Device exempts its own app from TUN routing (`addDisallowedApplication`), so a plain `openConnection()` bypasses the tunnel — ping badge showed direct latency not VPN quality.
+## Auto-Reconnect
+**Rule:** Keep-alive loop (every 15s): TCP probe first (`isProxyAlive`), then HTTPS ping. After 3 consecutive HTTPS failures → `triggerAutoReconnect()`.
+**Why:** Previously just called `stopVpn()` with no retry.
+**How:** `triggerAutoReconnect(reason)` uses `AtomicBoolean isReconnecting` guard + exponential backoff (3s→6s→12s→24s, cap 30s). Resets `reconnectCount` on clean connect.
+
+## NetworkMonitor
+**Rule:** Register `NetworkMonitor` in `startVpn()`, unregister in `stopVpn()`.
+**Why:** No way to detect Wi-Fi ↔ mobile data switch without `ConnectivityManager.NetworkCallback`.
+**How:** On `onNetworkAvailable()`: wait 2s for network to stabilize, then `triggerAutoReconnect("network change")`.
+
+## Clean Terminal Logs (no raw stack traces)
+**Rule:** `TunnelPingChecker.doHttpPing` catch block: log only `e.javaClass.simpleName + e.message.take(80)`. Never log stack frames to VpnLogManager.
+**Why:** Screenshots showed raw ConscrpytEngineSocket frames flooding the terminal log.
+
+## TunnelPingChecker.pingAndLog Return Value
+**Rule:** `pingAndLog()` returns `Boolean` (true = success).
+**Why:** Keep-alive loop needs to count consecutive failures.
+
+## isProxyAlive() TCP Probe
+**Rule:** Call `TunnelPingChecker.isProxyAlive(port)` before HTTPS ping in keep-alive loop.
+**Why:** TCP connect to 127.0.0.1:10808 completes in <200ms — quickly confirms Xray is alive before spending 12s on HTTPS.
 
 ## SDK Install Path on Replit
-
-**Why:** `sdkmanager --sdk_root=~/android-sdk` installs to `/home/runner/workspace/~/android-sdk/` (tilde not expanded) when run from workspace dir. `local.properties` must use `sdk.dir=/home/runner/workspace/~/android-sdk`.
+**Rule:** `sdk.dir=/home/runner/workspace/~/android-sdk` (tilde not expanded when run from workspace dir).
+**Why:** sdkmanager installs to workspace-relative path, not $HOME.
