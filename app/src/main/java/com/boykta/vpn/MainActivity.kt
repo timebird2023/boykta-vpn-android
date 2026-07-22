@@ -210,10 +210,12 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         handleIntent(intent)
     }
 
+    @Suppress("OVERRIDE_DEPRECATION")   // kept for API < 33 compat; dispatcher handles API 33+
     override fun onBackPressed() {
         if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
             drawerLayout.closeDrawer(GravityCompat.START)
         } else {
+            @Suppress("DEPRECATION")
             super.onBackPressed()
         }
     }

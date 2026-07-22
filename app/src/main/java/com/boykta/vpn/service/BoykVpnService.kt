@@ -1,5 +1,6 @@
 package com.boykta.vpn.service
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -23,6 +24,7 @@ import com.boykta.vpn.util.SplitTunnelManager
 import kotlinx.coroutines.*
 import java.net.NetworkInterface
 import java.util.Collections
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -86,7 +88,9 @@ class BoykVpnService : VpnService() {
     private var networkChangeJob : Job? = null
     private var trafficJob       : Job? = null
 
-    private val listeners        = mutableListOf<VpnStateListener>()
+    // CopyOnWriteArrayList: safe for concurrent add/remove from binder thread
+    // and forEach iteration from coroutines without ConcurrentModificationException
+    private val listeners        = CopyOnWriteArrayList<VpnStateListener>()
     private var networkMonitor   : NetworkMonitor? = null
 
     // WakeLock to prevent CPU sleep during VPN session
@@ -330,13 +334,16 @@ class BoykVpnService : VpnService() {
 
     // ── Step 2: WakeLock ──────────────────────────────────────────────────────
 
+    @SuppressLint("WakelockTimeout")   // intentionally no timeout — VPN sessions are unbounded
     private fun acquireWakeLock() {
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "BoyktaVPN:TunnelWakeLock"
-            ).also { it.acquire(60 * 60 * 1000L /* 1 hour */) }
+            ).also {
+                it.acquire()   // no timeout — released explicitly in releaseWakeLock()
+            }
         } catch (e: Exception) {
             VpnLogManager.warn("WakeLock failed: ${e.message}")
         }
@@ -464,13 +471,41 @@ class BoykVpnService : VpnService() {
         }
     }
 
+    /**
+     * Internal reconnect — tears down the current tunnel without stopping the service
+     * (i.e. does NOT call stopSelf()). Safe to call from the binder thread.
+     *
+     * Bug fixed: the old implementation called stopVpn() → stopSelf() → onDestroy()
+     * → serviceScope.cancel(), which would cancel the deferred startVpn() coroutine
+     * scheduled 2 seconds later, leaving the service in a dead state.
+     */
     fun reconnect() {
-        currentServer?.let { server ->
-            stopVpn()
-            serviceScope.launch {
-                delay(2_000)
-                startVpn(server)
+        val server = currentServer ?: return
+        if (!isReconnecting.compareAndSet(false, true)) return   // prevent double-reconnect
+
+        serviceScope.launch {
+            VpnLogManager.sys("Manual reconnect requested — tearing down current tunnel…")
+
+            keepAliveJob?.cancel();     keepAliveJob = null
+            networkChangeJob?.cancel(); networkChangeJob = null
+            isRunning    = false
+            isConnected.set(false)
+            TrafficCounter.stop()
+            networkMonitor?.stop();  networkMonitor = null
+            tunBridge?.stop();       tunBridge = null
+            XrayManager.forceStop()
+            releaseWakeLock()
+            try { vpnInterface?.close(); vpnInterface = null } catch (_: Exception) {}
+
+            withContext(Dispatchers.Main) {
+                listeners.forEach { it.onDisconnected() }
+                updateNotification("إعادة الاتصال…")
             }
+
+            delay(1_500)
+            isReconnecting.set(false)
+            VpnLogManager.isReconnecting.set(false)
+            startVpn(server)
         }
     }
 

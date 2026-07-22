@@ -353,26 +353,45 @@ object XrayManager {
         put("network", network)
         put("security", security)
 
-        if (security == "tls") {
-            put("tlsSettings", JSONObject().apply {
+        when (security.lowercase()) {
+            "tls" -> put("tlsSettings", JSONObject().apply {
                 put("serverName", sni.ifEmpty { host })
                 put("allowInsecure", false)
                 put("fingerprint", "chrome")
+            })
+            "reality" -> put("realitySettings", JSONObject().apply {
+                // publicKey and shortId must be embedded in the URI fragment or path
+                // For REALITY links: path="pbk=<key>&sid=<shortId>&spx=<spiderX>"
+                val realityParams = parseQueryString(path.removePrefix("?"))
+                put("fingerprint", "chrome")
+                put("publicKey", realityParams["pbk"] ?: "")
+                put("shortId",   realityParams["sid"] ?: "")
+                put("spiderX",   realityParams["spx"] ?: "/")
+                put("serverName", sni.ifEmpty { host })
             })
         }
 
         when (network.lowercase()) {
             "ws" -> put("wsSettings", JSONObject().apply {
-                // Preserve path exactly — no forced slashes
                 put("path", path.ifEmpty { "/" })
                 put("headers", JSONObject().apply { put("Host", host) })
             })
             "grpc" -> put("grpcSettings", JSONObject().apply {
                 put("serviceName", path.ifEmpty { "" })
+                put("multiMode", false)
             })
             "h2", "http" -> put("httpSettings", JSONObject().apply {
                 put("path", path.ifEmpty { "/" })
                 put("host", JSONArray().apply { put(host) })
+            })
+            // splithttp (xhttp) — Xray ≥ 1.8.16
+            "splithttp", "xhttp" -> put("splithttpSettings", JSONObject().apply {
+                put("path", path.ifEmpty { "/" })
+                put("host", host)
+            })
+            "httpupgrade" -> put("httpupgradeSettings", JSONObject().apply {
+                put("path", path.ifEmpty { "/" })
+                put("host", host)
             })
         }
     }

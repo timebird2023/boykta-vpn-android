@@ -13,11 +13,12 @@ Features:
   • User stats & activity logs
   • Remote log push to the app backend
 
-Configuration (embedded):
-  BOT_TOKEN        : 8384229136:AAGW1brTMe8guZnT9CcqzDzStZaLOLsyeYY
-  DEVELOPER_ID     : 7401831506
-  BACKEND_URL      : https://boykta.boykta.dpdns.org
-  BACKEND_PORT     : 25477
+Configuration (via environment variables):
+  BOT_TOKEN        — Telegram bot token
+  DEVELOPER_ID     — Telegram user ID of the developer
+  BACKEND_URL      — Backend API base URL
+  BACKEND_PORT     — Backend port
+  CF_TOKEN         — Cloudflare tunnel token
 """
 
 import asyncio
@@ -48,20 +49,30 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# ── Configuration (read from environment variables) ───────────────────────────
 
-BOT_TOKEN      = "8384229136:AAGW1brTMe8guZnT9CcqzDzStZaLOLsyeYY"
-DEVELOPER_ID   = 7401831506
-BACKEND_URL    = "https://boykta.boykta.dpdns.org"
-BACKEND_PORT   = 25477
-CF_TOKEN       = (
-    "eyJhIjoiOGNmMDQ1OGE1NTVlNTA2ZDRkMjQ1NDJmNDQ4YzM4NzUiLCJ0IjoiYmU5YzM5OTAt"
-    "ZTRjNC00NzY2LWI2YzYtOWNkYzZmMDViNTczIiwicyI6Ik5HRmtZV0U1TkRndE1XWmhNUzAw"
-    "T0RRNExUazNOREl0TmpRMU56VmpOakl3Tm1ZMyJ9"
-)
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "")
+DEVELOPER_ID = int(os.environ.get("DEVELOPER_ID", "0"))
+BACKEND_URL  = os.environ.get("BACKEND_URL", "https://boykta.boykta.dpdns.org")
+BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "25477"))
+CF_TOKEN     = os.environ.get("CF_TOKEN", "")
 
-# AES-256-GCM key derivation (matches Android CryptoHelper)
-CRYPTO_KEY_RAW = "BoyktaVPN_SecureKey_2024_AES256GCM"
+if not BOT_TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN environment variable is not set. "
+        "Set it before running the bot."
+    )
+if DEVELOPER_ID == 0:
+    raise RuntimeError(
+        "DEVELOPER_ID environment variable is not set. "
+        "Set it to your Telegram numeric user ID."
+    )
+
+# ── AES-256-GCM key derivation ─────────────────────────────────────────────────
+# IMPORTANT: this MUST match the key used in the Android app's CryptoHelper.kt.
+# Android: MessageDigest.getInstance("SHA-256").digest("boykta_2nlkkh53DaYBmllnvb2026")
+# Any change here makes all existing .boykta files unreadable by the app.
+CRYPTO_KEY_RAW = "boykta_2nlkkh53DaYBmllnvb2026"
 CRYPTO_KEY     = hashlib.sha256(CRYPTO_KEY_RAW.encode()).digest()
 
 # ── Logging ───────────────────────────────────────────────────────────────────

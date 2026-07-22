@@ -104,6 +104,26 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 - ✅ **Ping reliability fix**: `TunnelPingChecker.kt` replaced HTTPS-through-SOCKS5 ping (caused SSLHandshakeException/SocketTimeout with Trojan) with plain TCP probe to 1.1.1.1:80 through SOCKS5 — no TLS overhead, no false failures
 - ✅ **Unlocked config editing**: The 4 param fields (Target/Path/SNI/Host Header) in the unlocked config panel are now EditText — users can edit inline. "Save & Reconnect" button rebuilds the VLESS/Trojan URI with updated values while preserving UUID/password
 
+### Architecture Overhaul — Full Autonomous Audit (July 22 2026)
+
+- ✅ **CRITICAL: bot.py crypto key mismatch fixed** — `CRYPTO_KEY_RAW` was `"BoyktaVPN_SecureKey_2024_AES256GCM"` but Android `CryptoHelper.kt` uses `"boykta_2nlkkh53DaYBmllnvb2026"`; now aligned. Bot-generated `.boykta` files can now be decrypted by the Android app.
+- ✅ **Thread-safe listeners** — `BoykVpnService.listeners` changed from plain `mutableListOf` to `CopyOnWriteArrayList`; eliminates `ConcurrentModificationException` when binder and coroutine threads access the list concurrently.
+- ✅ **WakeLock indefinite** — `PowerManager.WakeLock.acquire()` no longer has a 1-hour hard cap (`@SuppressLint("WakelockTimeout")`). Sessions >60 min no longer lose CPU hold; WakeLock is still released explicitly in `releaseWakeLock()`.
+- ✅ **`reconnect()` race condition fixed** — Old `reconnect()` called `stopVpn()→stopSelf()→onDestroy()→serviceScope.cancel()`, silently cancelling the deferred `startVpn()`. New implementation does an in-place teardown without stopping the service, then re-runs `startVpn`.
+- ✅ **TunBridge `tunOut` FD leak** — `stop()` now closes both `tunIn` and `tunOut`; previously only `tunIn` was closed, leaving a dangling file descriptor each reconnect.
+- ✅ **Stall timeout doubled** — `STALL_TIMEOUT_MS` 60s → 120s in `TunBridge`; prevents killing HTTP long-polling / SSE connections that legitimately have no data for >60s.
+- ✅ **`VpnLogManager.emitCount` atomicity** — Changed from raw `var` to `AtomicInteger`; prevents missed increments when multiple coroutines emit logs concurrently.
+- ✅ **`XrayManager` transport coverage** — Added `splithttp`/`xhttp` (Xray ≥1.8.16), `httpupgrade`, and `reality` security support in `buildStreamSettings`. Links using these transports now produce valid Xray configs instead of silently omitting the transport block.
+- ✅ **Deprecated API suppressions** — `SplashActivity.overridePendingTransition` and `LocalDatabase.fallbackToDestructiveMigration` warnings resolved.
+- ✅ **bot.py credentials** — `BOT_TOKEN`, `DEVELOPER_ID`, `CF_TOKEN` moved from hardcoded constants to `os.environ.get()` with startup validation. Set these as Replit Secrets before running.
+
+### Build command (Replit)
+```bash
+export JAVA_HOME=/nix/store/xad649j61kwkh0id5wvyiab5rliprp4d-openjdk-17.0.15+6/lib/openjdk
+./gradlew assembleDebug --no-daemon
+# Output: app/build/outputs/apk/debug/app-debug.apk  (~7.8 MB)
+```
+
 ## User Preferences
 
 - Do not edit `.github/workflows/` files

@@ -55,7 +55,8 @@ class TunBridge(
 
         // Stall detection: if a SOCKS5 connection sends no data for this long,
         // treat it as stalled and close it (triggers device-side reconnect).
-        private const val STALL_TIMEOUT_MS = 60_000   // 60 s idle → stalled
+        // 120 s instead of 60 s to avoid killing HTTP long-polling / SSE connections.
+        private const val STALL_TIMEOUT_MS = 120_000   // 120 s idle → stalled
 
         // Connect timeout for each new SOCKS5 session
         private const val CONNECT_TIMEOUT_MS = 8_000
@@ -83,6 +84,7 @@ class TunBridge(
         sessions.values.forEach { it.close() }
         sessions.clear()
         runCatching { tunIn.close() }
+        runCatching { tunOut.close() }   // close write-end too — prevents FD leak
         VpnLogManager.sys("TunBridge stopped")
     }
 

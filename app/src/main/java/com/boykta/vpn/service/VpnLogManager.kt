@@ -7,6 +7,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Singleton log bus for the VPN pipeline.
@@ -40,14 +41,15 @@ object VpnLogManager {
     private val throttleMap = ConcurrentHashMap<String, Long>()
     private const val THROTTLE_MS = 3_000L
     private const val THROTTLE_CLEANUP_INTERVAL = 20
-    private var emitCount = 0
+    // AtomicInteger: emitCount is incremented from multiple coroutines concurrently
+    private val emitCount = AtomicInteger(0)
 
     private fun shouldThrottle(key: String): Boolean {
         val now = System.currentTimeMillis()
         val last = throttleMap[key] ?: 0L
         if (now - last < THROTTLE_MS) return true
         throttleMap[key] = now
-        if (++emitCount % THROTTLE_CLEANUP_INTERVAL == 0) {
+        if (emitCount.incrementAndGet() % THROTTLE_CLEANUP_INTERVAL == 0) {
             val expired = throttleMap.entries.filter { now - it.value > 30_000L }.map { it.key }
             expired.forEach { throttleMap.remove(it) }
         }
@@ -85,9 +87,9 @@ object VpnLogManager {
      */
     fun clearLogs() {
         throttleMap.clear()
-        emitCount = 0
-        // Reset the replay cache by resetting the shared flow internals isn't possible,
-        // but we can signal the UI to clear via a special sentinel line.
+        emitCount.set(0)
+        // MutableSharedFlow replay buffer cannot be flushed at runtime.
+        // We emit a sentinel that the LogAdapter recognises and wipes its local list.
         _logs.tryEmit("__CLEAR__")
     }
 }

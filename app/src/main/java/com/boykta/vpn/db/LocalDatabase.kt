@@ -20,7 +20,7 @@ abstract class LocalDatabase : RoomDatabase() {
                     LocalDatabase::class.java,
                     "boykta_local.db"
                 )
-                .fallbackToDestructiveMigration()   // drops & recreates on schema change
+                .fallbackToDestructiveMigration(true)   // drops all tables on schema change
                 .build()
                 .also { INSTANCE = it }
             }
