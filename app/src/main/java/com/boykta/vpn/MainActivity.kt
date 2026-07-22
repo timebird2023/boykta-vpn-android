@@ -108,6 +108,14 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
             vpnService = (service as BoykVpnService.LocalBinder).getService()
             vpnService?.addListener(this@MainActivity)
             serviceBound = true
+            // ── STATE SYNC FIX ──────────────────────────────────────────────────
+            // If the VPN was already running before this bind (e.g. app relaunch
+            // while connected), the onConnected() callback fired before addListener
+            // was called — so we missed it. Sync UI now.
+            if (BoykVpnService.isRunning) {
+                isVpnConnected = true
+                updateConnectUi(true)
+            }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             vpnService = null
@@ -135,6 +143,10 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     }
 
     private var selectedCountdownJob: Job? = null
+
+    companion object {
+        private const val CONNECTING = 2   // intermediate state sentinel
+    }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -623,21 +635,37 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     }
 
     private fun startVpnConnection(server: Server) {
+        // Show connecting state immediately on UI thread
+        runOnUiThread { updateConnectUi(CONNECTING) }
+
         lifecycleScope.launch(Dispatchers.IO) {
             // Resolve config URI: local servers store an encrypted URI in DB
             val resolvedServer = if (server.protocol == "local" && server.config.isBlank()) {
                 val db = LocalDatabase.get(this@MainActivity)
-                val encrypted = db.localServerDao().getEncryptedUri(server.id)
-                if (encrypted.isNullOrBlank()) {
-                    withContext(Dispatchers.Main) { showSnack("خطأ: تعذّر قراءة تكوين السيرفر") }
+                val raw = db.localServerDao().getEncryptedUri(server.id)
+                if (raw.isNullOrBlank()) {
+                    withContext(Dispatchers.Main) {
+                        updateConnectUi(false)
+                        showSnack("خطأ: تعذّر قراءة تكوين السيرفر")
+                    }
                     return@launch
                 }
-                val plainUri = try {
-                    if (CryptoHelper.isEncrypted(encrypted)) CryptoHelper.decrypt(encrypted)
-                    else encrypted
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) { showSnack("خطأ في فك تشفير السيرفر: ${e.message}") }
-                    return@launch
+                // ── BAD BASE64 FIX ─────────────────────────────────────────────
+                // Use server.isLocked as the authoritative gate, NOT content detection.
+                // CryptoHelper.isEncrypted() checks for '{' but a plain vless:// URI
+                // also doesn't start with '{' → decrypt() would throw "bad base-64".
+                val plainUri = if (server.isLocked) {
+                    try {
+                        CryptoHelper.decrypt(raw)
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            updateConnectUi(false)
+                            showSnack("خطأ في فك تشفير السيرفر: ${e.message}")
+                        }
+                        return@launch
+                    }
+                } else {
+                    raw   // plain URI — no decryption needed
                 }
                 server.copy(config = plainUri)
             } else {
@@ -659,6 +687,8 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     }
 
     private fun disconnectVpn() {
+        isVpnConnected = false
+        updateConnectUi(false)
         startService(Intent(this, BoykVpnService::class.java).apply {
             action = BoykVpnService.ACTION_DISCONNECT
         })
@@ -682,26 +712,46 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     }
 
     override fun onError(message: String) {
-        runOnUiThread { showSnack(message) }
+        runOnUiThread {
+            // Reset UI to disconnected on error
+            if (!isVpnConnected) updateConnectUi(false)
+            showSnack(message)
+        }
     }
 
-    private fun updateConnectUi(connected: Boolean) {
-        if (connected) {
-            // Use vector drawable ic_stop — no emoji text
-            ivConnectIcon.setImageResource(R.drawable.ic_stop)
-            tvConnectLabel.text = "DISCONNECT"
-            btnConnectMain.background = getDrawable(R.drawable.bg_connect_button_disconnect)
-            dotStatus.setBackgroundColor(0xFF00F2FE.toInt())
-            tvStatus.text = "متصل — ${viewModel.selectedServer.value?.name ?: ""}"
-            tvStatus.setTextColor(0xFF00F2FE.toInt())
-        } else {
-            // Use vector drawable ic_play — no emoji text
-            ivConnectIcon.setImageResource(R.drawable.ic_play)
-            tvConnectLabel.text = "CONNECT"
-            btnConnectMain.background = getDrawable(R.drawable.bg_connect_button)
-            dotStatus.setBackgroundColor(0xFFFF0055.toInt())
-            tvStatus.text = "غير متصل"
-            tvStatus.setTextColor(0xFFFF0055.toInt())
+    /**
+     * Update connect button, status bar, and dot.
+     * @param state  true = connected | false = disconnected | CONNECTING (2) = in-progress
+     */
+    private fun updateConnectUi(state: Any) {
+        val connected = state == true || state == 1
+        val connecting = state == CONNECTING
+
+        when {
+            connected -> {
+                ivConnectIcon.setImageResource(R.drawable.ic_stop)
+                tvConnectLabel.text = "DISCONNECT"
+                btnConnectMain.background = getDrawable(R.drawable.bg_connect_button_disconnect)
+                dotStatus.setBackgroundColor(0xFF00F2FE.toInt())
+                tvStatus.text = "متصل — ${viewModel.selectedServer.value?.name ?: ""}"
+                tvStatus.setTextColor(0xFF00F2FE.toInt())
+            }
+            connecting -> {
+                ivConnectIcon.setImageResource(R.drawable.ic_play)
+                tvConnectLabel.text = "CONNECTING"
+                btnConnectMain.background = getDrawable(R.drawable.bg_connect_button)
+                dotStatus.setBackgroundColor(0xFFFFCC00.toInt())
+                tvStatus.text = "جارٍ الاتصال…"
+                tvStatus.setTextColor(0xFFFFCC00.toInt())
+            }
+            else -> {
+                ivConnectIcon.setImageResource(R.drawable.ic_play)
+                tvConnectLabel.text = "CONNECT"
+                btnConnectMain.background = getDrawable(R.drawable.bg_connect_button)
+                dotStatus.setBackgroundColor(0xFFFF0055.toInt())
+                tvStatus.text = "غير متصل"
+                tvStatus.setTextColor(0xFFFF0055.toInt())
+            }
         }
     }
 

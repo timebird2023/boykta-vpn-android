@@ -1,39 +1,46 @@
 ---
-name: Boykta VPN UI overhaul + runtime fixes
-description: All major UI and runtime fixes applied to the Boykta VPN Android app
+name: Boykta VPN core bugs fixed (July 2026)
+description: Root-cause fixes for TCP data stalling, UI state mismatch, bad base-64 crash, and latency routing.
 ---
 
-## Key decisions & fixes
+# Boykta VPN — Critical Bug Fixes (July 2026)
 
-### Navigation Drawer
-- DrawerLayout wraps root ConstraintLayout in activity_main.xml
-- Drawer items: Telegram channel, Import config, Live logs, Check updates, Exit
-- Bottom bar kept minimal: Update + Logs + Key (🔑) only — Telegram/Exit removed (duplicates in drawer)
+## TCP Data Stalling (TunBridge)
 
-### Connect button
-- `ivConnectIcon` (ImageView) uses ic_play.xml / ic_stop.xml — no emoji text
-- Country code badge: plain 2-letter text (DE, US, etc.) — no emoji flags
+**Rule:** `TcpSession.onData()` MUST send a standalone ACK (FLAG_ACK, no payload) to the device synchronously before forwarding data to the SOCKS5 proxy.
 
-### Runtime fixes applied
-- `android:usesCleartextTraffic="true"` added to AndroidManifest.xml `<application>` tag
-- TunnelPingChecker: HTTP ping URLs changed to HTTPS (connectivitycheck.gstatic.com)
-- LatencyChecker: already used HTTPS (dns.google) — no change needed
-- Base64 fix in XrayManager: `sanitizeBase64()` helper normalises URL-safe chars (- → +, _ → /) and pads before decoding VMess and SS URIs
-- Base64 fix in CryptoHelper: same sanitisation in `decrypt()` before `Base64.NO_WRAP` decode
-- Notification toast: emoji 🔔 replaced with "[!]"
+**Why:** Without immediate ACKs the device's TCP send-window (65 KB) fills up and it stops transmitting — the relay logs show active connections but no real traffic flows (Telegram/browsers silent).
 
-### Diagnostic server removal
-- `app/src/debug/res/values/debug_config.xml`: URI and name set to empty strings
-- `debugTestServerConfig()` returns null when URI is blank → `builtInTestServers` is always empty
-- App launches with completely empty server list for the user
+**How to apply:** Always send ACK in `onData` BEFORE `toProxy.trySend`. Use `FLAG_PSH or FLAG_ACK` on proxy→device data packets (not just `FLAG_ACK`) for push notification.
 
-### App icon
-- `ic_launcher_foreground.xml` redesigned: cyan shield + pink power-button symbol (ring arc + vertical line)
-- `ic_launcher_background.xml`: unchanged (#0B0E14 dark)
+## TCP Buffer Sizing
 
-### Server test result
-- boykta2-100891635133.europe-west1.run.app:443 is reachable (TLS handshake succeeds, cert valid)
-- WebSocket path /boykta returns HTTP 404 for plain requests — expected Trojan camouflage behaviour
-- Server is operational; 404 is intentional for non-Trojan traffic
+**Rule:** Proxy→device read buffer should be 64 KB (not MTU−40). Socket buffers set to 128 KB. Channel capacity 1024.
 
-**Why:** `usesCleartextTraffic=false` (default on API 28+) blocks all plain HTTP; ping targets and any future HTTP calls need this flag or HTTPS. Base64 URL-safe strings from Xray URI share format use `-`/`_` instead of `+`/`/` which causes `bad base-64` crash without sanitisation.
+**Why:** Small read buffer serializes large downloads into many small packets, hurting throughput.
+
+## UI State Sync after Service Rebind
+
+**Rule:** In `ServiceConnection.onServiceConnected`, after `addListener`, check `BoykVpnService.isRunning` and call `updateConnectUi(true)` if true.
+
+**Why:** When app is relaunched while VPN is running, `onConnected()` fires before `addListener` — the new Activity never gets the callback. This causes the "غير متصل" display even when tunnel is active.
+
+## bad base-64 Toast
+
+**Rule:** In `startVpnConnection`, use `server.isLocked` to decide whether to decrypt — NOT `CryptoHelper.isEncrypted()`.
+
+**Why:** `isEncrypted("vless://...")` returns `true` because the URI doesn't start with `{`. Then `decrypt("vless://...")` throws "bad base-64". The fix is gating on `server.isLocked` AND fixing `isEncrypted` to skip known URI schemes.
+
+## CryptoHelper.isEncrypted() URI Schemes
+
+**Rule:** `isEncrypted` must return `false` for strings starting with `vless://`, `trojan://`, `vmess://`, `ss://`, `http://`, `https://`.
+
+## LatencyChecker VPN Routing
+
+**Rule:** When `BoykVpnService.isRunning == true`, route latency ping through `Proxy(SOCKS, 127.0.0.1:10808)` using `connectivitycheck.gstatic.com/generate_204`. Direct otherwise.
+
+**Why:** Device exempts its own app from TUN routing (`addDisallowedApplication`), so a plain `openConnection()` bypasses the tunnel — ping badge showed direct latency not VPN quality.
+
+## SDK Install Path on Replit
+
+**Why:** `sdkmanager --sdk_root=~/android-sdk` installs to `/home/runner/workspace/~/android-sdk/` (tilde not expanded) when run from workspace dir. `local.properties` must use `sdk.dir=/home/runner/workspace/~/android-sdk`.

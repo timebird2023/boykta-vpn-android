@@ -59,6 +59,22 @@ object CryptoHelper {
         return Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
-    /** Returns true if the string is AES-GCM encrypted (not plain JSON) */
-    fun isEncrypted(data: String): Boolean = !data.trimStart().startsWith("{")
+    /**
+     * Returns true if the string is AES-GCM encrypted (not plain JSON or a known URI scheme).
+     *
+     * IMPORTANT: vless://, trojan://, vmess://, ss://, and other plain URI strings must
+     * NOT be treated as encrypted, even though they don't start with '{'.
+     * Previously this caused a "bad base-64" crash when trying to decrypt a plain URI.
+     */
+    fun isEncrypted(data: String): Boolean {
+        val trimmed = data.trimStart()
+        if (trimmed.startsWith("{")) return false  // plain JSON
+        if (trimmed.startsWith("vless://")) return false
+        if (trimmed.startsWith("trojan://")) return false
+        if (trimmed.startsWith("vmess://")) return false
+        if (trimmed.startsWith("ss://")) return false
+        if (trimmed.startsWith("http://")) return false
+        if (trimmed.startsWith("https://")) return false
+        return true  // assume AES-GCM Base64 blob
+    }
 }

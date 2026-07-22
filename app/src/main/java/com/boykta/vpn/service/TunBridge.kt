@@ -23,9 +23,13 @@ import kotlin.random.Random
  *
  * TCP connections:
  *   1. SYN from TUN  → SOCKS5 CONNECT to Xray → send SYN-ACK to TUN
- *   2. DATA from TUN → write to SOCKS5 proxy socket
- *   3. DATA from Xray proxy → craft TCP+IP packet → write to TUN (the missing piece!)
+ *   2. DATA from TUN → send ACK immediately (keep TCP window open) → forward to SOCKS5
+ *   3. DATA from Xray proxy → craft TCP+IP packet → write to TUN
  *   4. FIN/RST       → graceful cleanup
+ *
+ * CRITICAL FIX: onData() now sends a standalone ACK immediately after receiving device data.
+ * Without this, the device's TCP send-window fills up and traffic stalls even though the
+ * SOCKS5 relay logs show active connections.
  *
  * UDP: protected DatagramSocket → bypasses TUN directly (DNS resolution)
  */
@@ -43,6 +47,7 @@ class TunBridge(
         private const val FLAG_FIN = 0x01
         private const val FLAG_SYN = 0x02
         private const val FLAG_RST = 0x04
+        private const val FLAG_PSH = 0x08
         private const val FLAG_ACK = 0x10
 
         private const val PROTO_TCP = 6
@@ -152,7 +157,7 @@ class TunBridge(
             // FIN — graceful close
             flags and FLAG_FIN != 0 -> sessions.remove(key)?.onFin()
 
-            // DATA
+            // DATA — forward and ACK immediately to keep TCP window open
             payload.isNotEmpty() -> sessions[key]?.onData(payload, seqNum)
 
             // Pure ACK — update ack tracking
@@ -164,6 +169,8 @@ class TunBridge(
 
     private fun handleUdp(pkt: ByteArray, ihl: Int, dstIp: ByteArray) {
         if (pkt.size < ihl + 8) return
+        val srcIp   = pkt.copyOfRange(12, 16)
+        val srcPort = pkt.u16(ihl)
         val dstPort = pkt.u16(ihl + 2)
         val payloadOff = ihl + 8
         if (pkt.size <= payloadOff) return
@@ -176,9 +183,49 @@ class TunBridge(
                     sock.soTimeout = 4_000
                     val addr = java.net.InetAddress.getByName(dstIp.ip)
                     sock.send(java.net.DatagramPacket(payload, payload.size, addr, dstPort))
+                    // Try to receive response and inject it back
+                    val resp = java.net.DatagramPacket(ByteArray(2048), 2048)
+                    try {
+                        sock.receive(resp)
+                        // Build IPv4+UDP response packet back to device
+                        val udpPayload = resp.data.copyOfRange(0, resp.length)
+                        injectUdpToTun(dstIp, dstPort, srcIp, srcPort, udpPayload)
+                    } catch (_: Exception) {} // response timeout OK for fire-and-forget
                 }
             } catch (_: Exception) {}
         }
+    }
+
+    /** Build and inject a UDP response packet into TUN (UDP→device direction). */
+    private fun injectUdpToTun(
+        sIp: ByteArray, sPort: Int,
+        dIp: ByteArray, dPort: Int,
+        payload: ByteArray
+    ) {
+        val udpLen = 8 + payload.size
+        val total  = IP_HDR + udpLen
+        val buf    = ByteArray(total)
+
+        // IPv4 header
+        buf[0] = 0x45.toByte()
+        buf[1] = 0x00
+        buf.w16(2, total)
+        buf.w16(4, (System.nanoTime() and 0xFFFFL).toInt())
+        buf[6] = 0x40; buf[7] = 0x00
+        buf[8] = 64
+        buf[9] = 17   // UDP
+        sIp.copyInto(buf, 12)
+        dIp.copyInto(buf, 16)
+        buf.w16(10, checksum(buf, 0, IP_HDR))
+
+        // UDP header
+        buf.w16(IP_HDR,     sPort)
+        buf.w16(IP_HDR + 2, dPort)
+        buf.w16(IP_HDR + 4, udpLen)
+        buf.w16(IP_HDR + 6, 0) // checksum optional for IPv4
+
+        payload.copyInto(buf, IP_HDR + 8)
+        sendToTun(buf)
     }
 
     // ── TCP Session — FULL BIDIRECTIONAL relay ────────────────────────────────
@@ -190,8 +237,8 @@ class TunBridge(
         clientIsn: Long,
     ) {
         private val socket   = Socket()
-        // Channel for device→proxy data (decouples TUN read loop from socket writes)
-        private val toProxy  = Channel<ByteArray>(capacity = 256)
+        // Channel for device→proxy data (large capacity; blocking send used to avoid drops)
+        private val toProxy  = Channel<ByteArray>(capacity = 1024)
 
         // Sequence tracking (unsigned 32-bit, stored as Long)
         @Volatile var mySeq : Long = (Random.nextLong() and 0x7FFF_FFFFL)
@@ -206,6 +253,9 @@ class TunBridge(
             socket.connect(InetSocketAddress("127.0.0.1", socksPort), 6_000)
             socket.soTimeout = 0
             socket.tcpNoDelay = true
+            // Larger socket buffers for better throughput
+            socket.receiveBufferSize = 131072
+            socket.sendBufferSize    = 131072
 
             val inp = socket.getInputStream()
             val out = socket.getOutputStream()
@@ -260,8 +310,9 @@ class TunBridge(
                 }
             }
 
-            // ── Proxy→Device reader (the missing piece: crafts IP+TCP and writes to TUN) ──
-            val rbuf = ByteArray(MTU - IP_HDR - TCP_HDR)
+            // ── Proxy→Device reader (crafts IP+TCP and writes to TUN) ──────────
+            // Uses a larger read buffer for better throughput (64 KB chunks)
+            val rbuf = ByteArray(65536)
             try {
                 while (alive) {
                     val len = inp.read(rbuf)
@@ -272,7 +323,7 @@ class TunBridge(
                         sIp = dstIp, sPort = dstPort,
                         dIp = srcIp, dPort = srcPort,
                         seq = mySeq, ack = myAck,
-                        flags = FLAG_ACK, payload = data
+                        flags = FLAG_PSH or FLAG_ACK, payload = data
                     ))
                     mySeq = (mySeq + len) and 0xFFFF_FFFFL
                 }
@@ -298,14 +349,39 @@ class TunBridge(
 
         // ── Called from TUN read loop ─────────────────────────────────────────
 
+        /**
+         * Called when the device sends TCP data to us.
+         *
+         * CRITICAL: We MUST send a standalone ACK back to the device IMMEDIATELY.
+         * Without this, the device's TCP send-window (typically 64KB) fills up and
+         * it stops transmitting — causing the visible "relay active but no traffic" symptom.
+         *
+         * We send the ACK synchronously (holding the tunLock for a brief moment), then
+         * enqueue the payload for async forwarding to the SOCKS5 proxy.
+         */
         fun onData(payload: ByteArray, seqNum: Long) {
             myAck = (seqNum + payload.size) and 0xFFFF_FFFFL
             if (!alive) return
-            toProxy.trySend(payload)   // non-blocking; drops if full (TCP retransmits)
+
+            // ① ACK immediately — keeps device TCP window open
+            sendToTun(buildTcp(
+                sIp = dstIp, sPort = dstPort,
+                dIp = srcIp, dPort = srcPort,
+                seq = mySeq, ack = myAck,
+                flags = FLAG_ACK
+            ))
+
+            // ② Enqueue payload for proxy — use offer, fall back to async send on overflow
+            if (!toProxy.trySend(payload).isSuccess) {
+                // Channel temporarily full — send via coroutine to avoid blocking read loop
+                scope.launch {
+                    try { toProxy.send(payload) } catch (_: Exception) {}
+                }
+            }
         }
 
         fun onAck(seqNum: Long) {
-            // Track for logging; no action needed for forwarding
+            // Window management — no explicit action needed for simple relay
         }
 
         fun onFin() {
@@ -383,7 +459,7 @@ class TunBridge(
         buf.w32(T + 8, ack)            // acknowledgement number
         buf[T + 12] = 0x50             // data offset = 5 words = 20 bytes
         buf[T + 13] = flags.toByte()
-        buf.w16(T + 14, 65535)         // window size
+        buf.w16(T + 14, 65535)         // window size (max — device flow-controls us)
         // bytes T+16/17 = TCP checksum — computed below after payload copied
         // bytes T+18/19 = urgent pointer (already 0)
 
