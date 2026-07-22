@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   • Rate-limiting: identical [WARN]/[ERR] messages throttled to 1 per 3 seconds
  *   • Reconnect-quiet mode: suppresses SOCKS5 failure spam during auto-reconnect
  *   • Replay buffer: 120 entries for late subscribers (e.g. app relaunch)
+ *   • clearLogs(): wipe the replay buffer and emit a separator
  */
 object VpnLogManager {
 
@@ -33,16 +34,12 @@ object VpnLogManager {
     private val ts get() = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
 
     // ── Reconnect-quiet mode ───────────────────────────────────────────────────
-    // When true, SOCKS5-connection-refused/timeout warnings are suppressed.
-    // Set true just before tearing down the tunnel; cleared when new session starts.
     val isReconnecting = AtomicBoolean(false)
 
     // ── Rate-limiting (dedup) ──────────────────────────────────────────────────
-    // Maps a normalized log key → last emit timestamp in ms.
-    // Prevents identical WARN/ERR bursts from flooding the terminal.
     private val throttleMap = ConcurrentHashMap<String, Long>()
-    private const val THROTTLE_MS = 3_000L   // 3 s per unique message
-    private const val THROTTLE_CLEANUP_INTERVAL = 20   // clean map every N emits
+    private const val THROTTLE_MS = 3_000L
+    private const val THROTTLE_CLEANUP_INTERVAL = 20
     private var emitCount = 0
 
     private fun shouldThrottle(key: String): Boolean {
@@ -50,8 +47,6 @@ object VpnLogManager {
         val last = throttleMap[key] ?: 0L
         if (now - last < THROTTLE_MS) return true
         throttleMap[key] = now
-
-        // Periodic cleanup to prevent unbounded map growth
         if (++emitCount % THROTTLE_CLEANUP_INTERVAL == 0) {
             val expired = throttleMap.entries.filter { now - it.value > 30_000L }.map { it.key }
             expired.forEach { throttleMap.remove(it) }
@@ -71,12 +66,8 @@ object VpnLogManager {
     fun sys(msg: String)     = emit("[SYS]  $msg")
 
     fun warn(msg: String) {
-        // Suppress SOCKS5 failure spam during reconnect window
         if (isReconnecting.get() && (msg.contains("SOCKS5") || msg.contains("10808") ||
-                msg.contains("SocketException") || msg.contains("SocketTimeout"))) {
-            return
-        }
-        // Rate-limit: same warning won't appear more than once per THROTTLE_MS
+                msg.contains("SocketException") || msg.contains("SocketTimeout"))) return
         val key = msg.take(80)
         if (shouldThrottle("W:$key")) return
         emit("[WARN] $msg")
@@ -86,5 +77,17 @@ object VpnLogManager {
         val key = msg.take(80)
         if (shouldThrottle("E:$key")) return
         emit("[ERR]  $msg")
+    }
+
+    /**
+     * Clear the replay buffer and reset throttle state.
+     * Emits a visual separator so the user sees the wipe in the terminal.
+     */
+    fun clearLogs() {
+        throttleMap.clear()
+        emitCount = 0
+        // Reset the replay cache by resetting the shared flow internals isn't possible,
+        // but we can signal the UI to clear via a special sentinel line.
+        _logs.tryEmit("__CLEAR__")
     }
 }

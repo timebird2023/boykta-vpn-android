@@ -61,8 +61,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     // ── Views ──────────────────────────────────────────────────────────────────
     private lateinit var tvStatus: TextView
     private lateinit var dotStatus: View
-    private lateinit var tvUpSpeed: TextView
-    private lateinit var tvDownSpeed: TextView
+    private lateinit var ivStatusShield: ImageView
 
     // Connect button (FrameLayout circle)
     private lateinit var btnConnectMain: View
@@ -92,10 +91,15 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
     private lateinit var btnBarLogs: View
     private lateinit var btnBarKey: View
 
+    // Glow rings
+    private lateinit var ringOuter: View
+    private lateinit var ringMid: View
+
     // Log terminal
     private lateinit var cardLogTerminal: View
     private lateinit var rvLogs: RecyclerView
     private lateinit var btnCloseLog: TextView
+    private lateinit var btnClearLogs: View
     private lateinit var logAdapter: LogAdapter
 
     // VPN service binding
@@ -214,8 +218,7 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
 
         tvStatus          = findViewById(R.id.tvStatus)
         dotStatus         = findViewById(R.id.dotStatus)
-        tvUpSpeed         = findViewById(R.id.tvUpSpeed)
-        tvDownSpeed       = findViewById(R.id.tvDownSpeed)
+        ivStatusShield    = findViewById(R.id.ivStatusShield)
 
         btnConnectMain    = findViewById(R.id.btnConnectMain)
         ivConnectIcon     = findViewById(R.id.ivConnectIcon)   // ImageView, no emoji
@@ -241,9 +244,13 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         btnBarLogs        = findViewById(R.id.btnBarLogs)
         btnBarKey         = findViewById(R.id.btnBarKey)
 
+        ringOuter         = findViewById(R.id.ringOuter)
+        ringMid           = findViewById(R.id.ringMid)
+
         cardLogTerminal   = findViewById(R.id.cardLogTerminal)
         rvLogs            = findViewById(R.id.rvLogs)
         btnCloseLog       = findViewById(R.id.btnCloseLog)
+        btnClearLogs      = findViewById(R.id.btnClearLogs)
     }
 
     // ── Click listeners ────────────────────────────────────────────────────────
@@ -363,6 +370,30 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
         // Close log terminal
         btnCloseLog.setOnClickListener {
             cardLogTerminal.visibility = View.GONE
+        }
+
+        // Clear logs
+        btnClearLogs.setOnClickListener {
+            logAdapter.clearAll()
+            com.boykta.vpn.service.VpnLogManager.clearLogs()
+            rvLogs.scrollToPosition(0)
+        }
+
+        // Share App
+        findViewById<View>(R.id.drawerItemShare).setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.START)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Boykta VPN")
+                putExtra(Intent.EXTRA_TEXT, "جرب Boykta VPN — خصوصية حقيقية وسرعة عالية\nhttps://t.me/boykta")
+            }
+            startActivity(Intent.createChooser(intent, "مشاركة التطبيق"))
+        }
+
+        // Privacy Policy
+        findViewById<View>(R.id.drawerItemPrivacy).setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.START)
+            PrivacyPolicyDialog().show(supportFragmentManager, "privacy")
         }
     }
 
@@ -724,33 +755,52 @@ class MainActivity : AppCompatActivity(), BoykVpnService.VpnStateListener {
      * @param state  true = connected | false = disconnected | CONNECTING (2) = in-progress
      */
     private fun updateConnectUi(state: Any) {
-        val connected = state == true || state == 1
+        val connected  = state == true || state == 1
         val connecting = state == CONNECTING
 
         when {
             connected -> {
+                // ── CONNECTED: cyan theme ──────────────────────────────────────
                 ivConnectIcon.setImageResource(R.drawable.ic_stop)
                 tvConnectLabel.text = "DISCONNECT"
                 btnConnectMain.background = getDrawable(R.drawable.bg_connect_button_disconnect)
+                tvConnectLabel.setTextColor(0xFF050508.toInt())    // dark text on cyan
                 dotStatus.setBackgroundColor(0xFF00F2FE.toInt())
                 tvStatus.text = "متصل — ${viewModel.selectedServer.value?.name ?: ""}"
                 tvStatus.setTextColor(0xFF00F2FE.toInt())
+                ivStatusShield.setColorFilter(0xFF00F2FE.toInt(),
+                    android.graphics.PorterDuff.Mode.SRC_IN)
+                // Glow rings: cyan halo
+                ringOuter.alpha = 1.0f
+                ringMid.alpha   = 1.0f
             }
             connecting -> {
+                // ── CONNECTING: amber theme ───────────────────────────────────
                 ivConnectIcon.setImageResource(R.drawable.ic_play)
                 tvConnectLabel.text = "CONNECTING"
                 btnConnectMain.background = getDrawable(R.drawable.bg_connect_button)
+                tvConnectLabel.setTextColor(0xFFFFFFFF.toInt())
                 dotStatus.setBackgroundColor(0xFFFFCC00.toInt())
                 tvStatus.text = "جارٍ الاتصال…"
                 tvStatus.setTextColor(0xFFFFCC00.toInt())
+                ivStatusShield.setColorFilter(0xFFFFCC00.toInt(),
+                    android.graphics.PorterDuff.Mode.SRC_IN)
+                ringOuter.alpha = 0.5f
+                ringMid.alpha   = 0.5f
             }
             else -> {
+                // ── DISCONNECTED: red theme ───────────────────────────────────
                 ivConnectIcon.setImageResource(R.drawable.ic_play)
                 tvConnectLabel.text = "CONNECT"
                 btnConnectMain.background = getDrawable(R.drawable.bg_connect_button)
+                tvConnectLabel.setTextColor(0xFFFFFFFF.toInt())
                 dotStatus.setBackgroundColor(0xFFFF0055.toInt())
                 tvStatus.text = "غير متصل"
                 tvStatus.setTextColor(0xFFFF0055.toInt())
+                ivStatusShield.setColorFilter(0xFFFF0055.toInt(),
+                    android.graphics.PorterDuff.Mode.SRC_IN)
+                ringOuter.alpha = 0.35f
+                ringMid.alpha   = 0.35f
             }
         }
     }

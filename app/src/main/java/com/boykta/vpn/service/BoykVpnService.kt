@@ -189,6 +189,10 @@ class BoykVpnService : VpnService() {
                 }
 
                 // ── Step 6: Start network change listener ─────────────────────
+                // Grace period: wait 10 s after establishing TUN before we
+                // react to network events. This prevents any residual onAvailable()
+                // callbacks (from network re-evaluation after TUN creation) from
+                // triggering an immediate unnecessary reconnect.
                 networkMonitor?.stop()
                 networkMonitor = NetworkMonitor(
                     context        = this@BoykVpnService,
@@ -196,9 +200,8 @@ class BoykVpnService : VpnService() {
                         serviceScope.launch {
                             if (isConnected.get() && !isReconnecting.get()) {
                                 VpnLogManager.info("Network changed — re-establishing tunnel…")
-                                // Debounce: let new network stabilize for 2.5 s
-                                delay(2_500)
-                                // Re-check: another reconnect may have started in this window
+                                // Let the new network fully stabilize
+                                delay(4_000)
                                 if (isConnected.get() && !isReconnecting.get()) {
                                     triggerAutoReconnect("network change")
                                 }
@@ -209,7 +212,13 @@ class BoykVpnService : VpnService() {
                         if (isConnected.get()) VpnLogManager.warn("Internet lost — waiting for recovery…")
                     }
                 )
-                networkMonitor?.start()
+                // Grace period: delay monitor start so initial TUN network events pass
+                serviceScope.launch {
+                    delay(10_000)
+                    if (isConnected.get() && !isReconnecting.get()) {
+                        networkMonitor?.start()
+                    }
+                }
 
                 // ── Step 7: Initial ping (give Xray time to fully init) ───────
                 delay(3_000)

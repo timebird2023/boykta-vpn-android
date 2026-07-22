@@ -10,17 +10,15 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Monitors internet connectivity and fires callbacks on network events.
  *
- * Used by BoykVpnService to:
- *  - Detect Wi-Fi ↔ mobile data switches and re-establish the VPN tunnel
- *  - Detect when internet is restored after a dropout
+ * Critical fix: NetworkRequest MUST include:
+ *   - NET_CAPABILITY_INTERNET   — only real internet-capable networks
+ *   - NET_CAPABILITY_NOT_VPN    — EXCLUDE the VPN TUN interface itself
  *
- * Debounce: onAvailable fires multiple times per network switch (Android behaviour).
- * We enforce a DEBOUNCE_MS cooldown between consecutive onNetworkAvailable()
- * invocations so BoykVpnService only sees ONE reconnect trigger per event.
+ * Without NET_CAPABILITY_NOT_VPN, when the TUN interface comes up Android fires
+ * onAvailable() for the VPN network → triggers an instant reconnect loop.
  *
- * Events:
- *  onNetworkAvailable  — a new internet-capable network came online (debounced)
- *  onNetworkLost       — the internet connection dropped
+ * Debounce: even with the VPN filter, Android can fire multiple onAvailable()
+ * per real network switch. We enforce an 8-second cooldown.
  */
 class NetworkMonitor(
     context: Context,
@@ -28,17 +26,23 @@ class NetworkMonitor(
     private val onNetworkLost: () -> Unit = {}
 ) {
     companion object {
-        private const val DEBOUNCE_MS = 4_000L
+        private const val DEBOUNCE_MS = 8_000L   // ignore duplicate events within 8 s
     }
 
     private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var registered = false
 
-    // Debounce: track last time onNetworkAvailable was forwarded
     private val lastAvailableMs = AtomicLong(0L)
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            // Extra safety: verify this is NOT a VPN network
+            val caps = cm.getNetworkCapabilities(network)
+            if (caps != null && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) {
+                // This is a VPN network — skip it entirely
+                return
+            }
+
             val now  = System.currentTimeMillis()
             val last = lastAvailableMs.get()
             if (now - last > DEBOUNCE_MS) {
@@ -46,10 +50,12 @@ class NetworkMonitor(
                     onNetworkAvailable()
                 }
             }
-            // else: duplicate event within debounce window — silently ignored
         }
 
         override fun onLost(network: Network) {
+            // Only react to non-VPN network loss
+            val caps = cm.getNetworkCapabilities(network)
+            if (caps != null && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) return
             onNetworkLost()
         }
     }
@@ -59,6 +65,7 @@ class NetworkMonitor(
         try {
             val req = NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) // ← THE KEY FIX
                 .build()
             cm.registerNetworkCallback(req, callback)
             registered = true

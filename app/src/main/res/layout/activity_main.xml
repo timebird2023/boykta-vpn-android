@@ -70,60 +70,14 @@
                     android:fontFamily="monospace"
                     android:layout_marginStart="8dp" />
 
-                <!-- Speed counters -->
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:gravity="end">
-
-                    <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-                        <ImageView
-                            android:layout_width="12dp"
-                            android:layout_height="12dp"
-                            android:src="@drawable/ic_refresh"
-                            app:tint="#00F2FE"
-                            android:rotation="180"
-                            android:contentDescription="upload" />
-                        <TextView
-                            android:id="@+id/tvUpSpeed"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0 KB/s"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="10sp"
-                            android:fontFamily="monospace"
-                            android:layout_marginStart="3dp"
-                            tools:text="1.2 MB/s" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-                        <ImageView
-                            android:layout_width="12dp"
-                            android:layout_height="12dp"
-                            android:src="@drawable/ic_refresh"
-                            app:tint="#FF0055"
-                            android:contentDescription="download" />
-                        <TextView
-                            android:id="@+id/tvDownSpeed"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0 KB/s"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="10sp"
-                            android:fontFamily="monospace"
-                            android:layout_marginStart="3dp"
-                            tools:text="5.4 MB/s" />
-                    </LinearLayout>
-                </LinearLayout>
+                <!-- Shield tint indicator (green when connected) -->
+                <ImageView
+                    android:id="@+id/ivStatusShield"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_shield"
+                    app:tint="#FF0055"
+                    android:contentDescription="connection status" />
 
             </LinearLayout>
 
@@ -167,6 +121,7 @@
 
             <!-- Outer glow ring 1 -->
             <View
+                android:id="@+id/ringOuter"
                 android:layout_width="200dp"
                 android:layout_height="200dp"
                 android:background="@drawable/bg_ring_outer"
@@ -174,6 +129,7 @@
 
             <!-- Outer glow ring 2 -->
             <View
+                android:id="@+id/ringMid"
                 android:layout_width="172dp"
                 android:layout_height="172dp"
                 android:background="@drawable/bg_ring_mid"
@@ -703,17 +659,32 @@
                         android:letterSpacing="0.08"
                         android:layout_marginStart="6dp" />
 
+                    <!-- Clear logs -->
+                    <ImageView
+                        android:id="@+id/btnClearLogs"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:src="@drawable/ic_trash"
+                        app:tint="@color/text_secondary"
+                        android:padding="4dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="مسح السجل"
+                        android:layout_marginEnd="4dp" />
+
                     <TextView
                         android:id="@+id/btnCloseLog"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="X"
+                        android:text="✕"
                         android:textColor="@color/text_secondary"
-                        android:textSize="13sp"
+                        android:textSize="14sp"
                         android:textStyle="bold"
                         android:padding="4dp"
                         android:clickable="true"
-                        android:focusable="true" />
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless" />
                 </LinearLayout>
 
                 <View
@@ -889,6 +860,74 @@
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
                 android:text="سجل اللايف"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:fontFamily="monospace"
+                android:layout_marginStart="14dp" />
+        </LinearLayout>
+
+        <!-- Share App -->
+        <LinearLayout
+            android:id="@+id/drawerItemShare"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="@drawable/bg_drawer_item"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:layout_marginTop="4dp">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_share"
+                app:tint="#00F2FE"
+                android:contentDescription="share" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="مشاركة التطبيق"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:fontFamily="monospace"
+                android:layout_marginStart="14dp" />
+        </LinearLayout>
+
+        <!-- Privacy Policy -->
+        <LinearLayout
+            android:id="@+id/drawerItemPrivacy"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="@drawable/bg_drawer_item"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:layout_marginTop="4dp">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_privacy"
+                app:tint="#00F2FE"
+                android:contentDescription="privacy policy" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="سياسة الخصوصية والاستخدام"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp"
                 android:fontFamily="monospace"

@@ -18,32 +18,46 @@ import com.boykta.vpn.R
  *   [DEV]  — Steel Blue     #6B9AC4  (device/environment)
  *   [INFO] — White          #CCCCCC  (informational)
  *
- * Keeps at most MAX_LINES entries to avoid unbounded memory growth.
- * UI updates batched: notifyItemInserted only (no full rebinds).
+ * Sentinel: "__CLEAR__" causes the adapter to wipe all lines.
  */
 class LogAdapter : RecyclerView.Adapter<LogAdapter.VH>() {
 
     companion object {
-        private const val MAX_LINES = 250   // cap log lines for smooth 60fps
+        private const val MAX_LINES = 250
 
-        // ARGB colors (fully opaque)
-        private const val COLOR_OK   = 0xFF00F2FE.toInt()   // cyan
-        private const val COLOR_ERR  = 0xFFFF0055.toInt()   // neon red
-        private const val COLOR_WARN = 0xFFFFCC00.toInt()   // amber
-        private const val COLOR_SYS  = 0xFF8888AA.toInt()   // grey-blue
-        private const val COLOR_DEV  = 0xFF6B9AC4.toInt()   // steel-blue
-        private const val COLOR_INFO = 0xFFCCCCCC.toInt()   // white-ish
+        private const val COLOR_OK   = 0xFF00F2FE.toInt()
+        private const val COLOR_ERR  = 0xFFFF0055.toInt()
+        private const val COLOR_WARN = 0xFFFFCC00.toInt()
+        private const val COLOR_SYS  = 0xFF8888AA.toInt()
+        private const val COLOR_DEV  = 0xFF6B9AC4.toInt()
+        private const val COLOR_INFO = 0xFFCCCCCC.toInt()
+        private const val COLOR_SEP  = 0xFF444466.toInt()
+
+        const val CLEAR_SENTINEL = "__CLEAR__"
     }
 
     private val lines = ArrayDeque<String>(MAX_LINES)
 
     fun addLine(line: String) {
+        if (line == CLEAR_SENTINEL) {
+            clearAll()
+            return
+        }
         if (lines.size >= MAX_LINES) {
             lines.removeFirst()
             notifyItemRemoved(0)
         }
         lines.addLast(line)
         notifyItemInserted(lines.size - 1)
+    }
+
+    fun clearAll() {
+        val count = lines.size
+        lines.clear()
+        notifyItemRangeRemoved(0, count)
+        // Insert a visual separator so the user sees the wipe happened
+        lines.addLast("─────── سجل مسح ───────")
+        notifyItemInserted(0)
     }
 
     inner class VH(view: View) : RecyclerView.ViewHolder(view) {
@@ -63,12 +77,13 @@ class LogAdapter : RecyclerView.Adapter<LogAdapter.VH>() {
     }
 
     private fun lineColor(line: String): Int = when {
-        line.contains("[OK]")   -> COLOR_OK
-        line.contains("[ERR]")  -> COLOR_ERR
-        line.contains("[WARN]") -> COLOR_WARN
-        line.contains("[SYS]")  -> COLOR_SYS
-        line.contains("[DEV]")  -> COLOR_DEV
-        else                    -> COLOR_INFO
+        line.contains("[OK]")    -> COLOR_OK
+        line.contains("[ERR]")   -> COLOR_ERR
+        line.contains("[WARN]")  -> COLOR_WARN
+        line.contains("[SYS]")   -> COLOR_SYS
+        line.contains("[DEV]")   -> COLOR_DEV
+        line.startsWith("─────") -> COLOR_SEP
+        else                     -> COLOR_INFO
     }
 
     override fun getItemCount() = lines.size
