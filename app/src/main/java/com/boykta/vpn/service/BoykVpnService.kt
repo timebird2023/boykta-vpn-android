@@ -240,19 +240,17 @@ class BoykVpnService : VpnService() {
                 TrafficCounter.start(serviceScope)
 
                 // ── STEP 9: Start network change listener ─────────────────────
+                // IMPORTANT: NetworkMonitor is OBSERVE-ONLY while the VPN is active.
+                // A healthy running tunnel MUST NEVER be killed by network change events.
+                // Auto-reconnect is triggered exclusively by Xray crash detection in the
+                // keep-alive loop (Step 10 below). Physical network changes are logged only.
                 networkMonitor?.stop()
                 networkMonitor = NetworkMonitor(
                     context = this@BoykVpnService,
                     onNetworkAvailable = {
-                        networkChangeJob?.cancel()
-                        networkChangeJob = serviceScope.launch {
-                            if (isConnected.get() && !isReconnecting.get()) {
-                                VpnLogManager.info("Physical network changed — re-establishing tunnel…")
-                                delay(5_000)
-                                if (isConnected.get() && !isReconnecting.get()) {
-                                    triggerAutoReconnect("network change")
-                                }
-                            }
+                        // Log the event — DO NOT reconnect. Tunnel remains active.
+                        if (isConnected.get()) {
+                            VpnLogManager.info("Physical network changed — tunnel remains active (no action taken)")
                         }
                     },
                     onNetworkLost = {

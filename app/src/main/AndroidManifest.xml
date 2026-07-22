@@ -21,6 +21,8 @@
     <!-- Android 13+ uses READ_MEDIA_* instead -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
         tools:ignore="ProtectedPermissions" />
+    <!-- WakeLock — prevents CPU sleep during active VPN session -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Battery optimization exemption — keeps VPN service alive -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Query installed packages (for split-tunnel app list) -->

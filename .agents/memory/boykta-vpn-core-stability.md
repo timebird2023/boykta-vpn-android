@@ -5,6 +5,13 @@ description: Key fixes applied to stop SOCKS5 error spam, stale ping loops, rapi
 
 # Boykta VPN core stability fixes
 
+## CRITICAL: NetworkCallback MUST be observe-only while tunnel is active
+**Root cause (confirmed July 2026 via screenshot evidence):** Even with NET_CAPABILITY_NOT_VPN filtering and the 10s grace delay, a real physical network switch (e.g. cell→WiFi) fires onAvailable() and previously triggered `triggerAutoReconnect("network change")` — killing a perfectly healthy tunnel (5ms ping right before disconnect).
+
+**Fix:** The `onNetworkAvailable` callback in `BoykVpnService.startVpn()` now ONLY logs the event. It NEVER calls `triggerAutoReconnect`. Auto-reconnect is triggered exclusively by Xray crash detection in the keep-alive loop (proxy not responding / XrayManager.isRunning() == false).
+
+**Rule:** A running VPN session must never be killed by network callback events. NetworkMonitor is observe-only while connected.
+
 ## THE BIG FIX: VPN self-disconnect loop
 **Root cause:** When the TUN interface comes up, Android fires `onAvailable()` for the VPN network itself. Without filtering, NetworkMonitor treated this as a "real network change" → triggered reconnect → infinite loop.
 
@@ -15,6 +22,9 @@ description: Key fixes applied to stop SOCKS5 error spam, stale ping loops, rapi
 4. Debounce raised from 4 s → 8 s.
 
 **Why:** Android's `ConnectivityManager` fires onAvailable for every network including the VPN tun0. Without `NET_CAPABILITY_NOT_VPN` in the request, every connection created an instant reconnect loop.
+
+## WAKE_LOCK permission
+`android.permission.WAKE_LOCK` must be declared in AndroidManifest.xml. Without it, `PowerManager.newWakeLock().acquire()` throws a SecurityException on production devices (seen as `[WARN] WakeLock failed: Neither user ... nor current process has android.permission.WAKE_LOCK`).
 
 ## Log format change
 VpnLogManager emits structured prefixes — `[OK]`, `[WARN]`, `[ERR]`, `[SYS]`, `[INFO]`, `[DEV]` instead of emoji.

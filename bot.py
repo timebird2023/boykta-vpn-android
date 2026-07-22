@@ -170,6 +170,80 @@ def build_boykta_config(
         "method": "aes-256-gcm",
     }
 
+def decrypt_boykta(data: bytes) -> dict | None:
+    """
+    Try to decrypt (AES-256-GCM) or parse (plain JSON) a .boykta file.
+    Returns the parsed dict on success, None on failure.
+    """
+    # 1. Try AES-GCM decrypt first
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        raw = base64.b64decode(data)
+        if len(raw) > 12:
+            iv = raw[:12]
+            ct = raw[12:]
+            plaintext = AESGCM(CRYPTO_KEY).decrypt(iv, ct, None)
+            return json.loads(plaintext.decode())
+    except Exception:
+        pass
+
+    # 2. Try plain JSON
+    try:
+        return json.loads(data.decode())
+    except Exception:
+        pass
+
+    # 3. Try base64-encoded plain JSON (unlocked via bot genconfig)
+    try:
+        return json.loads(base64.b64decode(data).decode())
+    except Exception:
+        pass
+
+    return None
+
+
+def boykta_cfg_to_uri(cfg: dict) -> str:
+    """Convert a BoykConfig dict back to a proxy URI for storage."""
+    protocol = cfg.get("p", "vless")
+    host     = cfg.get("h", "")
+    port     = cfg.get("port", 443)
+    uuid     = cfg.get("id", "")
+    path     = cfg.get("path", "/")
+    sni      = cfg.get("sni", host)
+    net      = cfg.get("net", "ws")
+    sec      = cfg.get("sec", "tls")
+    name     = cfg.get("n", "Server")
+    hh       = cfg.get("hh", host)
+
+    if protocol in ("vless",):
+        return (
+            f"vless://{uuid}@{host}:{port}"
+            f"?type={net}&security={sec}&path={path}&sni={sni}&host={hh}"
+            f"#{name}"
+        )
+    elif protocol == "trojan":
+        return (
+            f"trojan://{uuid}@{host}:{port}"
+            f"?type={net}&security={sec}&path={path}&sni={sni}&host={hh}"
+            f"#{name}"
+        )
+    elif protocol == "vmess":
+        import json as _json
+        vmess_obj = {
+            "v": "2", "ps": name, "add": host, "port": str(port),
+            "id": uuid, "aid": "0", "net": net, "type": "none",
+            "host": hh, "path": path, "tls": sec if sec != "none" else "",
+        }
+        return "vmess://" + base64.b64encode(_json.dumps(vmess_obj).encode()).decode()
+    elif protocol == "ss":
+        # Shadowsocks: method:password@host:port
+        method   = cfg.get("method", "aes-256-gcm")
+        userinfo = base64.b64encode(f"{method}:{uuid}".encode()).decode()
+        return f"ss://{userinfo}@{host}:{port}#{name}"
+    else:
+        return f"{protocol}://{uuid}@{host}:{port}#{name}"
+
+
 async def check_backend_health() -> dict:
     """Check Cloudflare tunnel + backend health."""
     try:
@@ -269,13 +343,50 @@ async def cb_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "panel_servers":
         if not _servers:
-            await q.message.reply_text("لا توجد سيرفرات. استخدم /addserver لإضافة سيرفر.")
+            await q.message.reply_text("لا توجد سيرفرات. استخدم /addserver أو أرسل ملف .boykta مباشرة.")
             return
-        lines = []
+        buttons = []
         for s in _servers:
             active = "✅" if s.get("active") else "❌"
-            lines.append(f"{active} `{s['id']}` — *{s['name']}* — ينتهي: {s.get('expires_at','?')[:10]}")
-        await q.message.reply_markdown("🖥 *السيرفرات:*\n\n" + "\n".join(lines))
+            buttons.append([InlineKeyboardButton(
+                f"{active} [{s['id']}] {s['name']} — {s.get('expires_at','?')[:10]}",
+                callback_data=f"del_server_{s['id']}"
+            )])
+        buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="panel_back")])
+        await q.message.reply_markdown(
+            "🖥 *السيرفرات:* (اضغط على سيرفر لحذفه)\n\n"
+            f"المجموع: {len(_servers)} سيرفر",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+
+    elif data.startswith("del_server_"):
+        if data == "del_server_cancel":
+            await q.message.edit_text("❌ تم الإلغاء.")
+            return
+        try:
+            sid = int(data.replace("del_server_", ""))
+        except ValueError:
+            return
+        # Find server name before deletion
+        server_name = next((s["name"] for s in _servers if s["id"] == sid), f"ID {sid}")
+        found = _do_delete_server(sid)
+        if found:
+            await q.message.edit_text(f"🗑 تم حذف السيرفر: *{server_name}* (ID {sid})", parse_mode="Markdown")
+        else:
+            await q.message.reply_text(f"❌ لم يُوجَد سيرفر بالـ ID {sid}.")
+        return
+
+    elif data == "panel_back":
+        # Re-show panel
+        keyboard = [
+            [InlineKeyboardButton("📣 بث إعلان", callback_data="panel_broadcast"),
+             InlineKeyboardButton("🖥 إدارة السيرفرات", callback_data="panel_servers")],
+            [InlineKeyboardButton("🔑 توليد كونفيغ", callback_data="panel_genconfig"),
+             InlineKeyboardButton("📊 إحصائيات", callback_data="panel_stats")],
+            [InlineKeyboardButton("💓 فحص الخادم", callback_data="panel_health"),
+             InlineKeyboardButton("📋 سجل المستخدمين", callback_data="panel_userlog")],
+        ]
+        await q.message.edit_text("🎛 لوحة تحكم Boykta VPN — مطور", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "panel_broadcast":
         await q.message.reply_text(
@@ -482,11 +593,14 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "\n*أوامر المطور:*\n"
         "/panel — لوحة التحكم\n"
         "/broadcast <نص> — بث إعلان\n"
-        "/addserver <اسم> <uri> [أيام] — إضافة سيرفر\n"
-        "/removeserver <id> — حذف سيرفر\n"
+        "/addserver <اسم> <uri> [أيام] — إضافة سيرفر يدوياً\n"
+        "/removeserver <id> — حذف سيرفر بالـ ID\n"
+        "/deleteserver [id] — حذف سيرفر بقائمة تفاعلية\n"
         "/listservers — قائمة السيرفرات\n"
         "/genconfig — توليد كونفيغ مشفر\n"
-        "/status — فحص الخادم\n"
+        "/status — فحص الخادم\n\n"
+        "📎 *أرسل ملف .boykta مباشرة لرفعه كسيرفر تلقائياً*\n"
+        "   (يدعم الملفات المشفرة والمفتوحة)"
     )
     await update.message.reply_markdown(base + (dev_cmds if is_dev else ""))
 
@@ -544,6 +658,138 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             caption="✅ تم توليد الكونفيغ المشفّر"
         )
 
+# ── .boykta file upload handler ──────────────────────────────────────────────
+
+async def handle_boykta_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    Developer sends a .boykta file directly to the bot.
+    Bot decrypts/parses it and registers it as a server automatically.
+    Also supports any document if the developer is the sender.
+    """
+    msg = update.message
+    if not msg or not msg.document:
+        return
+
+    # Only developer can upload servers
+    if update.effective_user.id != DEVELOPER_ID:
+        await msg.reply_text("🚫 رفع السيرفرات للمطور فقط.")
+        return
+
+    doc = msg.document
+    filename = doc.file_name or ""
+
+    # Accept .boykta files or any file the developer sends
+    if not filename.endswith(".boykta") and "boykta" not in filename.lower():
+        # Not a .boykta file — ignore silently (could be other uploads)
+        return
+
+    await msg.reply_text("⏳ جارٍ تحليل الملف...")
+
+    try:
+        tg_file = await ctx.bot.get_file(doc.file_id)
+        raw_bytes = await tg_file.download_as_bytearray()
+    except Exception as e:
+        await msg.reply_text(f"❌ فشل تحميل الملف: {e}")
+        return
+
+    cfg = decrypt_boykta(bytes(raw_bytes))
+    if cfg is None:
+        await msg.reply_text(
+            "❌ تعذّر قراءة الملف.\n\n"
+            "تأكد أن الملف:\n"
+            "• مشفّر بـ AES-256-GCM (ملف مغلق)\n"
+            "• أو JSON صالح (ملف مفتوح)"
+        )
+        return
+
+    # Extract fields
+    name     = cfg.get("n") or cfg.get("name") or f"Server-{int(time.time())}"
+    protocol = cfg.get("p") or cfg.get("protocol") or "vless"
+    host     = cfg.get("h") or cfg.get("host") or ""
+    port     = cfg.get("port") or 443
+    exp_secs = cfg.get("exp") or 0
+    locked   = cfg.get("locked", True)
+
+    # Build a URI for storage
+    uri = boykta_cfg_to_uri(cfg)
+
+    # Calculate expiry
+    if exp_secs and exp_secs > 0:
+        from datetime import datetime, timedelta
+        exp_dt = datetime.utcnow() + timedelta(seconds=int(exp_secs))
+        exp_str = exp_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    else:
+        exp_str = expires_ts(30)  # default 30 days
+
+    server_id = (max(s["id"] for s in _servers) + 1) if _servers else 1
+    _servers.append({
+        "id":         server_id,
+        "name":       name,
+        "uri":        uri,
+        "config":     cfg,
+        "expires_at": exp_str,
+        "active":     True,
+        "created_at": now_ts(),
+        "locked":     locked,
+    })
+
+    # Inline button to delete this server immediately
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"🗑 حذف هذا السيرفر (ID {server_id})", callback_data=f"del_server_{server_id}"),
+    ]])
+
+    lock_tag = "🔒 مغلق" if locked else "🔓 مفتوح"
+    await msg.reply_markdown(
+        f"✅ *تم رفع السيرفر إلى التطبيق*\n\n"
+        f"🆔 ID: `{server_id}`\n"
+        f"📛 الاسم: *{name}*\n"
+        f"🌐 البروتوكول: `{protocol.upper()}`\n"
+        f"🖥 الخادم: `{host}:{port}`\n"
+        f"🔐 النوع: {lock_tag}\n"
+        f"📅 ينتهي: `{exp_str[:10]}`",
+        reply_markup=keyboard
+    )
+
+
+# ── /deleteserver — Delete server by ID with optional inline confirmation ──────
+
+@dev_only
+async def cmd_deleteserver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Delete a server by ID. Shows interactive list if no ID given."""
+    if ctx.args:
+        try:
+            sid = int(ctx.args[0])
+        except ValueError:
+            await update.message.reply_text("ID يجب أن يكون رقماً. مثال: /deleteserver 3")
+            return
+        _do_delete_server(sid)
+        await update.message.reply_text(f"✅ تم حذف السيرفر ID {sid}." if not any(s["id"] == sid for s in _servers) else f"❌ لا يوجد سيرفر بالـ ID {sid}.")
+        return
+
+    # No ID given — show interactive list
+    if not _servers:
+        await update.message.reply_text("لا توجد سيرفرات.")
+        return
+
+    buttons = []
+    for s in _servers:
+        buttons.append([InlineKeyboardButton(
+            f"🗑 [{s['id']}] {s['name']}", callback_data=f"del_server_{s['id']}"
+        )])
+    buttons.append([InlineKeyboardButton("❌ إلغاء", callback_data="del_server_cancel")])
+    await update.message.reply_markdown(
+        "🗑 *اختر السيرفر الذي تريد حذفه:*",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+def _do_delete_server(sid: int) -> bool:
+    """Remove server by id from _servers. Returns True if found."""
+    before = len(_servers)
+    _servers[:] = [s for s in _servers if s["id"] != sid]
+    return len(_servers) < before
+
+
 # ── /cancel ────────────────────────────────────────────────────────────────────
 
 async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -575,6 +821,7 @@ def main():
     app.add_handler(CommandHandler("broadcast",     cmd_broadcast))
     app.add_handler(CommandHandler("addserver",     cmd_addserver))
     app.add_handler(CommandHandler("removeserver",  cmd_removeserver))
+    app.add_handler(CommandHandler("deleteserver",  cmd_deleteserver))
     app.add_handler(CommandHandler("listservers",   cmd_listservers))
     app.add_handler(CommandHandler("genconfig",     cmd_genconfig))
     app.add_handler(CommandHandler("status",        cmd_status))
@@ -584,6 +831,9 @@ def main():
 
     # Inline button callbacks
     app.add_handler(CallbackQueryHandler(cb_panel))
+
+    # .boykta document upload handler (must come before text handler)
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_boykta_document))
 
     # Free-form message handler (for conversation steps)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
