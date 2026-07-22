@@ -375,6 +375,11 @@ object XrayManager {
             "ws" -> put("wsSettings", JSONObject().apply {
                 put("path", path.ifEmpty { "/" })
                 put("headers", JSONObject().apply { put("Host", host) })
+                // Send a WebSocket ping frame every 30 s.
+                // Prevents Cloudflare (and other proxies) from closing idle
+                // WebSocket connections after their ~100 s idle timeout,
+                // which is the root cause of the "تقطع" (intermittent drop) issue.
+                put("heartbeatPeriod", 30)
             })
             "grpc" -> put("grpcSettings", JSONObject().apply {
                 put("serviceName", path.ifEmpty { "" })

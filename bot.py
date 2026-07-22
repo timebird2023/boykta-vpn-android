@@ -108,7 +108,18 @@ _user_log: list[dict] = []         # {"user_id", "action", "ts"}
     AWAIT_CONFIG_SNI,
     AWAIT_CONFIG_EXPIRY,
     AWAIT_CONFIG_LOCKED,
-) = range(12)
+    AWAIT_AD_MEDIA,
+) = range(13)
+
+# ── Announcement queue ────────────────────────────────────────────────────────
+# Each entry: {"id", "type": "image"|"video", "file_ids": [...], "caption": str, "created_at": str}
+_announcement_queue: list[dict] = []
+_ad_id_counter = 0
+
+def _next_ad_id() -> int:
+    global _ad_id_counter
+    _ad_id_counter += 1
+    return _ad_id_counter
 
 # ── Auth decorator ─────────────────────────────────────────────────────────────
 
@@ -253,16 +264,49 @@ async def check_backend_health() -> dict:
     except Exception as e:
         return {"status": 0, "ok": False, "error": str(e)}
 
-async def push_broadcast_to_backend(title: str, message: str, media_url: str = "") -> bool:
-    """Push a broadcast announcement to the app backend."""
+async def push_broadcast_to_backend(
+    title: str,
+    message: str,
+    media_urls: list[str] | None = None,
+    telegram_file_ids: list[str] | None = None,
+    media_type: str = "image",
+) -> bool:
+    """
+    Push a broadcast announcement to the app backend.
+
+    Use `telegram_file_ids` for media uploaded via the bot.
+    NEVER pass token-bearing Telegram download URLs in `media_urls` —
+    those embed the bot token and would expose it to every app client.
+    The backend must resolve file_ids server-side using its own bot-token copy.
+    """
     try:
-        async with httpx.AsyncClient(timeout=10, headers={"Authorization": f"Bearer {CF_TOKEN}"}) as client:
-            payload = {"title": title, "message": message, "media_urls": [media_url] if media_url else [], "created_at": now_ts()}
+        async with httpx.AsyncClient(timeout=15, headers={"Authorization": f"Bearer {CF_TOKEN}"}) as client:
+            payload: dict = {
+                "title": title,
+                "message": message,
+                "media_type": media_type,
+                "created_at": now_ts(),
+            }
+            if telegram_file_ids and isinstance(telegram_file_ids, list) and len(telegram_file_ids) > 0:
+                # Preferred: opaque file_ids — token stays server-side
+                payload["telegram_file_ids"] = [str(f) for f in telegram_file_ids]
+            elif media_urls and isinstance(media_urls, list) and len(media_urls) > 0:
+                # Only for pre-existing public CDN URLs (no bot token embedded)
+                payload["media_urls"] = [str(u) for u in media_urls]
             r = await client.post(f"{BACKEND_URL}/api/announcements", json=payload)
             return r.status_code < 400
     except Exception as e:
         log.error(f"Backend push failed: {e}")
         return False
+
+
+async def _get_file_size(bot, file_id: str) -> int:
+    """Return the byte size of a Telegram file (0 on error). Used for validation only."""
+    try:
+        tg_file = await bot.get_file(file_id)
+        return tg_file.file_size or 0
+    except Exception:
+        return 0
 
 # ── /start ─────────────────────────────────────────────────────────────────────
 
@@ -291,8 +335,9 @@ async def cmd_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🖥 إدارة السيرفرات", callback_data="panel_servers")],
         [InlineKeyboardButton("🔑 توليد كونفيغ", callback_data="panel_genconfig"),
          InlineKeyboardButton("📊 إحصائيات", callback_data="panel_stats")],
-        [InlineKeyboardButton("💓 فحص الخادم", callback_data="panel_health"),
-         InlineKeyboardButton("📋 سجل المستخدمين", callback_data="panel_userlog")],
+        [InlineKeyboardButton("📢 إدارة الإعلانات", callback_data="panel_ads"),
+         InlineKeyboardButton("💓 فحص الخادم", callback_data="panel_health")],
+        [InlineKeyboardButton("📋 سجل المستخدمين", callback_data="panel_userlog")],
     ]
     await update.message.reply_markdown(
         "🎛 *لوحة تحكم Boykta VPN — مطور*",
@@ -383,8 +428,9 @@ async def cb_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("🖥 إدارة السيرفرات", callback_data="panel_servers")],
             [InlineKeyboardButton("🔑 توليد كونفيغ", callback_data="panel_genconfig"),
              InlineKeyboardButton("📊 إحصائيات", callback_data="panel_stats")],
-            [InlineKeyboardButton("💓 فحص الخادم", callback_data="panel_health"),
-             InlineKeyboardButton("📋 سجل المستخدمين", callback_data="panel_userlog")],
+            [InlineKeyboardButton("📢 إدارة الإعلانات", callback_data="panel_ads"),
+             InlineKeyboardButton("💓 فحص الخادم", callback_data="panel_health")],
+            [InlineKeyboardButton("📋 سجل المستخدمين", callback_data="panel_userlog")],
         ]
         await q.message.edit_text("🎛 لوحة تحكم Boykta VPN — مطور", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -393,6 +439,55 @@ async def cb_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "📣 أرسل نص الإعلان الآن (أو /cancel للإلغاء):"
         )
         ctx.user_data["awaiting"] = "broadcast"
+
+    elif data == "panel_ads":
+        if not _announcement_queue:
+            keyboard = [[InlineKeyboardButton("➕ إضافة إعلان جديد", callback_data="panel_setad"),
+                         InlineKeyboardButton("🔙 رجوع", callback_data="panel_back")]]
+            await q.message.reply_markdown(
+                "📢 *قائمة الإعلانات* — لا توجد إعلانات حالياً.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            lines = []
+            buttons = []
+            for ad in _announcement_queue:
+                media_label = "📹 فيديو" if ad["type"] == "video" else f"🖼 صور ({len(ad['file_ids'])})"
+                lines.append(f"[{ad['id']}] {media_label} — {ad['created_at'][:10]}")
+                buttons.append([InlineKeyboardButton(
+                    f"🗑 [{ad['id']}] {media_label}", callback_data=f"del_ad_{ad['id']}"
+                )])
+            buttons.append([
+                InlineKeyboardButton("➕ إضافة إعلان", callback_data="panel_setad"),
+                InlineKeyboardButton("🔙 رجوع", callback_data="panel_back"),
+            ])
+            await q.message.reply_markdown(
+                "📢 *قائمة الإعلانات:* (اضغط لحذف)\n\n" + "\n".join(lines),
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+
+    elif data.startswith("del_ad_"):
+        try:
+            aid = int(data.replace("del_ad_", ""))
+            before = len(_announcement_queue)
+            _announcement_queue[:] = [a for a in _announcement_queue if a["id"] != aid]
+            if len(_announcement_queue) < before:
+                await q.message.edit_text(f"🗑 تم حذف الإعلان ID {aid}.")
+            else:
+                await q.message.reply_text(f"❌ لا يوجد إعلان بالـ ID {aid}.")
+        except (ValueError, Exception):
+            pass
+
+    elif data == "panel_setad":
+        await q.message.reply_text(
+            "📢 *إضافة إعلان جديد*\n\n"
+            "أرسل صورة واحدة أو أكثر (ستظهر كعرض شرائح) أو فيديو (حتى 15 ثانية).\n\n"
+            "بعد إرسال جميع الصور اكتب /done — أو أرسل الفيديو مباشرة.\n"
+            "/cancel للإلغاء.",
+            parse_mode="Markdown"
+        )
+        ctx.user_data["awaiting"] = "ad_media"
+        ctx.user_data["pending_ad"] = {"file_ids": [], "type": "image"}
 
     elif data == "panel_genconfig":
         await q.message.reply_text(
@@ -411,29 +506,141 @@ async def cmd_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = " ".join(ctx.args)
     await _do_broadcast(update, ctx, "إعلان Boykta VPN", text)
 
-async def _do_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE, title: str, text: str):
+async def _do_broadcast(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE,
+    title: str, text: str,
+    media_urls: list[str] | None = None,
+    media_type: str = "image",
+):
     sent = 0
     failed = 0
     for uid in list(_subscribers):
         try:
             await ctx.bot.send_message(
-                uid,
-                f"📣 *{title}*\n\n{text}",
-                parse_mode="Markdown"
+                uid, f"📣 *{title}*\n\n{text}", parse_mode="Markdown"
             )
             sent += 1
         except Exception:
             failed += 1
     _broadcast_log.append(f"{now_ts()} | {title}: {text[:60]}")
-    # Push to backend
-    ok = await push_broadcast_to_backend(title, text)
-    backend_tag = "✅ Backend" if ok else "❌ Backend failed"
+    # Push announcement to app backend so it shows as in-app ad after connection
+    ok = await push_broadcast_to_backend(title, text, media_urls=media_urls, media_type=media_type)
+    backend_tag = "✅ Backend (إعلان داخل التطبيق)" if ok else "❌ Backend failed"
     await update.message.reply_text(
         f"📣 تم البث\n\n"
         f"أُرسل إلى: {sent} مستخدم\n"
         f"فشل: {failed}\n"
         f"{backend_tag}"
     )
+
+# ── /setad — Add a media announcement (photos carousel or video) ───────────────
+
+@dev_only
+async def cmd_setad(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    Start an ad-creation flow.
+    Developer can send multiple photos (= carousel) or a single video (≤15 s).
+    Type /done after photos to finalize. Video finalizes automatically.
+    """
+    await update.message.reply_text(
+        "📢 *إضافة إعلان جديد*\n\n"
+        "أرسل صورة واحدة أو أكثر (ستظهر كعرض شرائح تلقائي) أو فيديو (حتى 15 ثانية).\n\n"
+        "• بعد إرسال جميع الصور اكتب /done\n"
+        "• الفيديو يُضاف تلقائياً دون /done\n"
+        "• /cancel للإلغاء",
+        parse_mode="Markdown"
+    )
+    ctx.user_data["awaiting"] = "ad_media"
+    ctx.user_data["pending_ad"] = {"file_ids": [], "type": "image"}
+
+
+@dev_only
+async def cmd_listads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """List all queued announcements."""
+    if not _announcement_queue:
+        await update.message.reply_text("📢 لا توجد إعلانات في القائمة.")
+        return
+    lines = []
+    for ad in _announcement_queue:
+        t = "📹 فيديو" if ad["type"] == "video" else f"🖼 صور ({len(ad['file_ids'])})"
+        lines.append(f"[{ad['id']}] {t} — {ad['created_at'][:10]}")
+    await update.message.reply_markdown(
+        "📢 *قائمة الإعلانات المجدولة:*\n\n" + "\n".join(lines) +
+        f"\n\nالمجموع: {len(_announcement_queue)}"
+    )
+
+
+@dev_only
+async def cmd_clearads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Clear all queued announcements."""
+    count = len(_announcement_queue)
+    _announcement_queue.clear()
+    await update.message.reply_text(f"🗑 تم حذف {count} إعلان.")
+
+
+async def cmd_donead(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Finalize a photo-based ad after the developer is done sending photos."""
+    if update.effective_user.id != DEVELOPER_ID:
+        return
+    pending = ctx.user_data.get("pending_ad")
+    if ctx.user_data.get("awaiting") != "ad_media" or not pending:
+        await update.message.reply_text("لا يوجد إعلان جارٍ إنشاؤه.")
+        return
+    if not pending["file_ids"]:
+        await update.message.reply_text("❌ لم تُرسل أي صور بعد.")
+        return
+    await _finalize_ad(update, ctx, pending)
+
+
+async def _finalize_ad(update, ctx, pending: dict):
+    """
+    Save announcement to queue and push file_ids (NOT token-bearing URLs) to backend.
+
+    Security note: Telegram download URLs embed the bot token
+    (https://api.telegram.org/file/bot{TOKEN}/...). We NEVER build or
+    transmit those URLs. Instead we send opaque Telegram file_ids to the
+    backend, which must resolve them server-side using its own copy of the
+    bot token and serve the resulting media through its own CDN/proxy
+    endpoint — keeping the bot token out of client-facing payloads entirely.
+    """
+    ctx.user_data.pop("awaiting", None)
+    ctx.user_data.pop("pending_ad", None)
+
+    file_ids = pending.get("file_ids", [])
+    if not file_ids:
+        await update.message.reply_text("❌ لا توجد ملفات مرفقة.")
+        return
+
+    await update.message.reply_text("⏳ جارٍ حفظ الإعلان…")
+
+    ad_id = _next_ad_id()
+    ad = {
+        "id": ad_id,
+        "type": pending["type"],
+        "file_ids": file_ids,          # opaque Telegram identifiers — not secrets
+        "created_at": now_ts(),
+    }
+    _announcement_queue.append(ad)
+
+    # Push to backend using opaque file_ids, NOT token-bearing download URLs.
+    # The backend resolves file_ids server-side via its own bot-token copy.
+    ok = await push_broadcast_to_backend(
+        title="إعلان Boykta VPN",
+        message="",
+        telegram_file_ids=file_ids,
+        media_type=pending["type"],
+    )
+    backend_tag = "✅ مُرسل للتطبيق" if ok else "⚠️ Backend failed — الإعلان محفوظ محلياً"
+
+    media_label = "📹 فيديو" if pending["type"] == "video" else f"🖼 {len(file_ids)} صورة"
+    await update.message.reply_markdown(
+        f"✅ *تم إضافة الإعلان*\n\n"
+        f"🆔 ID: `{ad_id}`\n"
+        f"النوع: {media_label}\n"
+        f"Backend: {backend_tag}\n\n"
+        f"سيظهر هذا الإعلان في التطبيق عند الاتصال الناجح لمدة 15 ثانية."
+    )
+
 
 # ── /addserver ────────────────────────────────────────────────────────────────
 
@@ -591,8 +798,11 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     dev_cmds = (
         "\n*أوامر المطور:*\n"
-        "/panel — لوحة التحكم\n"
-        "/broadcast <نص> — بث إعلان\n"
+        "/panel — لوحة التحكم الكاملة\n"
+        "/broadcast <نص> — بث إعلان نصي\n"
+        "/setad — إضافة إعلان بصور أو فيديو (يظهر بعد الاتصال)\n"
+        "/listads — قائمة الإعلانات المجدولة\n"
+        "/clearads — حذف جميع الإعلانات\n"
         "/addserver <اسم> <uri> [أيام] — إضافة سيرفر يدوياً\n"
         "/removeserver <id> — حذف سيرفر بالـ ID\n"
         "/deleteserver [id] — حذف سيرفر بقائمة تفاعلية\n"
@@ -600,9 +810,45 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/genconfig — توليد كونفيغ مشفر\n"
         "/status — فحص الخادم\n\n"
         "📎 *أرسل ملف .boykta مباشرة لرفعه كسيرفر تلقائياً*\n"
-        "   (يدعم الملفات المشفرة والمفتوحة)"
+        "   (يدعم الملفات المشفرة والمفتوحة)\n\n"
+        "🖼 *لإضافة إعلان بصور:* اكتب /setad ثم أرسل الصور وأنهِ بـ /done\n"
+        "📹 *لإضافة إعلان فيديو:* اكتب /setad ثم أرسل الفيديو مباشرة"
     )
     await update.message.reply_markdown(base + (dev_cmds if is_dev else ""))
+
+# ── Photo/Video handler for ad creation ──────────────────────────────────────
+
+async def handle_media_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle photo and video messages sent during ad creation flow."""
+    if update.effective_user.id != DEVELOPER_ID:
+        return
+    if ctx.user_data.get("awaiting") != "ad_media":
+        return
+
+    msg = update.message
+    pending = ctx.user_data.setdefault("pending_ad", {"file_ids": [], "type": "image"})
+
+    if msg.photo:
+        # Take the highest-resolution version
+        file_id = msg.photo[-1].file_id
+        pending["file_ids"].append(file_id)
+        pending["type"] = "image"
+        count = len(pending["file_ids"])
+        await msg.reply_text(
+            f"✅ صورة {count} مضافة. أرسل المزيد أو اكتب /done للحفظ."
+        )
+    elif msg.video:
+        # Video → finalize immediately
+        pending["file_ids"] = [msg.video.file_id]
+        pending["type"] = "video"
+        await _finalize_ad(update, ctx, pending)
+    elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("video"):
+        pending["file_ids"] = [msg.document.file_id]
+        pending["type"] = "video"
+        await _finalize_ad(update, ctx, pending)
+    else:
+        await msg.reply_text("أرسل صورة أو فيديو. أو اكتب /cancel للإلغاء.")
+
 
 # ── Message handler for conversation states ───────────────────────────────────
 
@@ -819,6 +1065,10 @@ def main():
     app.add_handler(CommandHandler("help",          cmd_help))
     app.add_handler(CommandHandler("panel",         cmd_panel))
     app.add_handler(CommandHandler("broadcast",     cmd_broadcast))
+    app.add_handler(CommandHandler("setad",         cmd_setad))
+    app.add_handler(CommandHandler("listads",       cmd_listads))
+    app.add_handler(CommandHandler("clearads",      cmd_clearads))
+    app.add_handler(CommandHandler("done",          cmd_donead))
     app.add_handler(CommandHandler("addserver",     cmd_addserver))
     app.add_handler(CommandHandler("removeserver",  cmd_removeserver))
     app.add_handler(CommandHandler("deleteserver",  cmd_deleteserver))
@@ -831,6 +1081,12 @@ def main():
 
     # Inline button callbacks
     app.add_handler(CallbackQueryHandler(cb_panel))
+
+    # Photo / video / video-document handler for ad creation (must be before document handler)
+    app.add_handler(MessageHandler(
+        filters.PHOTO | filters.VIDEO | filters.Document.VIDEO,
+        handle_media_message,
+    ))
 
     # .boykta document upload handler (must come before text handler)
     app.add_handler(MessageHandler(filters.Document.ALL, handle_boykta_document))

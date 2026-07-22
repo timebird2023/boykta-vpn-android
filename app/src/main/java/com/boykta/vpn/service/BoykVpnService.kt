@@ -186,7 +186,9 @@ class BoykVpnService : VpnService() {
 
                 val builder = Builder()
                     .setSession("Boykta VPN — ${server.name}")
-                    .setMtu(1500)
+                    // MTU 1380 — leaves headroom for WS framing (~10B) + TLS record (~29B)
+                    // over the Cloudflare edge, preventing IP fragmentation that kills throughput.
+                    .setMtu(1380)
                     .addAddress("10.88.0.1", 30)
                     .addRoute("0.0.0.0", 0)
                     .addDisallowedApplication(packageName)   // always exclude self
