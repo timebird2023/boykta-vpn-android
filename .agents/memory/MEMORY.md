@@ -1,3 +1,4 @@
 - [Android build setup on Replit](android-build-setup.md) — env vars, SDK paths, all build fixes applied to get Boykta VPN compiling.
 - [Boykta VPN UI overhaul](boykta-vpn-ui-overhaul.md) — full redesign: single server card, auto-ping, bottom sheet select, key decisions.
 - [Boykta VPN core stability](boykta-vpn-core-stability.md) — reconnect spam fix, log throttle, debounce, stall detection, log format change.
+- [Boykta VPN v3 feature set](boykta-vpn-v3-features.md) — state machine, WakeLock, ping-no-kill, traffic counter, DNS chooser, split tunnel, clipboard detect, battery opt, Telegram bot.

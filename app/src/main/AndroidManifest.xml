@@ -21,6 +21,11 @@
     <!-- Android 13+ uses READ_MEDIA_* instead -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
         tools:ignore="ProtectedPermissions" />
+    <!-- Battery optimization exemption — keeps VPN service alive -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Query installed packages (for split-tunnel app list) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <application
         android:name="com.boykta.vpn.App"

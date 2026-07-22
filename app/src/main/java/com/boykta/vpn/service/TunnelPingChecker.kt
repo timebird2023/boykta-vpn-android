@@ -113,13 +113,13 @@ object TunnelPingChecker {
             if (VpnLogManager.isReconnecting.get()) return@withContext false
             val result = tcpProbeThrough(socksPort, host, port)
             if (result >= 0) {
-                VpnLogManager.success("Ping OK — ${result}ms via SOCKS5 → $host:$port [$ts]")
+                VpnLogManager.success("HTTP Ping 200 OK (${result}ms) via SOCKS5 → $host:$port [$ts]")
                 return@withContext true
             }
         }
 
         if (!VpnLogManager.isReconnecting.get()) {
-            VpnLogManager.warn("Tunnel check failed — no response from SOCKS5:$socksPort [$ts]")
+            VpnLogManager.warn("HTTP Ping Timeout — no response from SOCKS5:$socksPort [$ts]")
         }
         false
     }

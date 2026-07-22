@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- ══ Core background palette — Pure Pitch Black neon dark ══ -->
-    <color name="background">#050508</color>
-    <color name="background_alt">#0A0D14</color>
-    <color name="card">#0F131D</color>
-    <color name="surface">#0F131D</color>
-    <color name="surface_variant">#151C2B</color>
+    <color name="background">#000000</color>
+    <color name="background_alt">#050508</color>
+    <color name="card">#0A0D12</color>
+    <color name="surface">#0A0D12</color>
+    <color name="surface_variant">#0F1420</color>
     <color name="border">#00F2FE2A</color>
     <color name="divider">#162033</color>
 
