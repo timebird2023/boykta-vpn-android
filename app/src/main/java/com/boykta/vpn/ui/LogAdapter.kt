@@ -9,16 +9,39 @@ import com.boykta.vpn.R
 
 /**
  * Terminal-style log adapter for the real-time VPN log viewer.
+ *
+ * Color coding by structured log level prefix:
+ *   [OK]   — Electric Cyan  #00F2FE  (successful milestones)
+ *   [ERR]  — Neon Red       #FF0055  (errors)
+ *   [WARN] — Amber          #FFCC00  (warnings)
+ *   [SYS]  — Grey-Blue      #8888AA  (system/lifecycle)
+ *   [DEV]  — Steel Blue     #6B9AC4  (device/environment)
+ *   [INFO] — White          #CCCCCC  (informational)
+ *
  * Keeps at most MAX_LINES entries to avoid unbounded memory growth.
+ * UI updates batched: notifyItemInserted only (no full rebinds).
  */
 class LogAdapter : RecyclerView.Adapter<LogAdapter.VH>() {
 
-    companion object { private const val MAX_LINES = 300 }
+    companion object {
+        private const val MAX_LINES = 250   // cap log lines for smooth 60fps
+
+        // ARGB colors (fully opaque)
+        private const val COLOR_OK   = 0xFF00F2FE.toInt()   // cyan
+        private const val COLOR_ERR  = 0xFFFF0055.toInt()   // neon red
+        private const val COLOR_WARN = 0xFFFFCC00.toInt()   // amber
+        private const val COLOR_SYS  = 0xFF8888AA.toInt()   // grey-blue
+        private const val COLOR_DEV  = 0xFF6B9AC4.toInt()   // steel-blue
+        private const val COLOR_INFO = 0xFFCCCCCC.toInt()   // white-ish
+    }
 
     private val lines = ArrayDeque<String>(MAX_LINES)
 
     fun addLine(line: String) {
-        if (lines.size >= MAX_LINES) lines.removeFirst()
+        if (lines.size >= MAX_LINES) {
+            lines.removeFirst()
+            notifyItemRemoved(0)
+        }
         lines.addLast(line)
         notifyItemInserted(lines.size - 1)
     }
@@ -36,15 +59,16 @@ class LogAdapter : RecyclerView.Adapter<LogAdapter.VH>() {
     override fun onBindViewHolder(holder: VH, position: Int) {
         val line = lines[position]
         holder.tv.text = line
-        // Color-code by prefix
-        val color = when {
-            line.contains("✅") -> 0xFF00F2FE.toInt()
-            line.contains("❌") -> 0xFFFF0055.toInt()
-            line.contains("⚠")  -> 0xFFFFCC00.toInt()
-            line.contains("⚙")  -> 0xFF8888AA.toInt()
-            else                 -> 0xFFCCCCCC.toInt()
-        }
-        holder.tv.setTextColor(color)
+        holder.tv.setTextColor(lineColor(line))
+    }
+
+    private fun lineColor(line: String): Int = when {
+        line.contains("[OK]")   -> COLOR_OK
+        line.contains("[ERR]")  -> COLOR_ERR
+        line.contains("[WARN]") -> COLOR_WARN
+        line.contains("[SYS]")  -> COLOR_SYS
+        line.contains("[DEV]")  -> COLOR_DEV
+        else                    -> COLOR_INFO
     }
 
     override fun getItemCount() = lines.size

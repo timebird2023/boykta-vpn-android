@@ -21,17 +21,15 @@ import kotlin.random.Random
  *   Device app → TUN (raw IPv4 packet) → TunBridge → SOCKS5:10808 → Xray → VPN Server → Internet
  *   Internet   → VPN Server → Xray → SOCKS5:10808 → TunBridge → crafted IP+TCP packet → TUN → Device
  *
- * TCP connections:
- *   1. SYN from TUN  → SOCKS5 CONNECT to Xray → send SYN-ACK to TUN
- *   2. DATA from TUN → send ACK immediately (keep TCP window open) → forward to SOCKS5
- *   3. DATA from Xray proxy → craft TCP+IP packet → write to TUN
- *   4. FIN/RST       → graceful cleanup
- *
- * CRITICAL FIX: onData() now sends a standalone ACK immediately after receiving device data.
- * Without this, the device's TCP send-window fills up and traffic stalls even though the
- * SOCKS5 relay logs show active connections.
- *
- * UDP: protected DatagramSocket → bypasses TUN directly (DNS resolution)
+ * Stability fixes:
+ *   • TCP keep-alive enabled on every SOCKS5 socket (OS-level keepalive)
+ *   • TCP no-delay enabled for low-latency streaming
+ *   • 128 KB socket buffers for throughput
+ *   • STALL DETECTION: idle socket read timeout (STALL_TIMEOUT_MS). If the proxy
+ *     returns no data for that long, the session is closed and a RST injected.
+ *     This prevents connections that SOCKS5 accepted but never forward data.
+ *   • Immediate ACK on data receipt — keeps device TCP window open
+ *   • 64 KB read buffer for proxy→device path (better throughput)
  */
 class TunBridge(
     private val tunPfd: ParcelFileDescriptor,
@@ -54,6 +52,13 @@ class TunBridge(
         private const val PROTO_UDP = 17
         private const val IP_HDR   = 20
         private const val TCP_HDR  = 20
+
+        // Stall detection: if a SOCKS5 connection sends no data for this long,
+        // treat it as stalled and close it (triggers device-side reconnect).
+        private const val STALL_TIMEOUT_MS = 60_000   // 60 s idle → stalled
+
+        // Connect timeout for each new SOCKS5 session
+        private const val CONNECT_TIMEOUT_MS = 8_000
     }
 
     private val scope    = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -145,8 +150,13 @@ class TunBridge(
                         try {
                             session.connect()
                         } catch (e: Exception) {
-                            VpnLogManager.warn("TCP ${dstIp.ip}:$dstPort failed: ${e.message}")
-                            Log.w(TAG, "TCP connect error", e)
+                            if (running) {
+                                // Suppress repeated SOCKS5-refused during reconnect window
+                                if (!VpnLogManager.isReconnecting.get()) {
+                                    VpnLogManager.warn("TCP ${dstIp.ip}:$dstPort failed: ${e.message}")
+                                }
+                                Log.w(TAG, "TCP connect error", e)
+                            }
                             sessions.remove(key)
                             session.sendRst()
                         }
@@ -183,14 +193,12 @@ class TunBridge(
                     sock.soTimeout = 4_000
                     val addr = java.net.InetAddress.getByName(dstIp.ip)
                     sock.send(java.net.DatagramPacket(payload, payload.size, addr, dstPort))
-                    // Try to receive response and inject it back
                     val resp = java.net.DatagramPacket(ByteArray(2048), 2048)
                     try {
                         sock.receive(resp)
-                        // Build IPv4+UDP response packet back to device
                         val udpPayload = resp.data.copyOfRange(0, resp.length)
                         injectUdpToTun(dstIp, dstPort, srcIp, srcPort, udpPayload)
-                    } catch (_: Exception) {} // response timeout OK for fire-and-forget
+                    } catch (_: Exception) {}
                 }
             } catch (_: Exception) {}
         }
@@ -206,7 +214,6 @@ class TunBridge(
         val total  = IP_HDR + udpLen
         val buf    = ByteArray(total)
 
-        // IPv4 header
         buf[0] = 0x45.toByte()
         buf[1] = 0x00
         buf.w16(2, total)
@@ -218,11 +225,10 @@ class TunBridge(
         dIp.copyInto(buf, 16)
         buf.w16(10, checksum(buf, 0, IP_HDR))
 
-        // UDP header
         buf.w16(IP_HDR,     sPort)
         buf.w16(IP_HDR + 2, dPort)
         buf.w16(IP_HDR + 4, udpLen)
-        buf.w16(IP_HDR + 6, 0) // checksum optional for IPv4
+        buf.w16(IP_HDR + 6, 0)
 
         payload.copyInto(buf, IP_HDR + 8)
         sendToTun(buf)
@@ -232,15 +238,13 @@ class TunBridge(
 
     private inner class TcpSession(
         val key: String,
-        val srcIp: ByteArray, val srcPort: Int,   // device (client)
-        val dstIp: ByteArray, val dstPort: Int,   // real destination
+        val srcIp: ByteArray, val srcPort: Int,
+        val dstIp: ByteArray, val dstPort: Int,
         clientIsn: Long,
     ) {
         private val socket   = Socket()
-        // Channel for device→proxy data (large capacity; blocking send used to avoid drops)
         private val toProxy  = Channel<ByteArray>(capacity = 1024)
 
-        // Sequence tracking (unsigned 32-bit, stored as Long)
         @Volatile var mySeq : Long = (Random.nextLong() and 0x7FFF_FFFFL)
         @Volatile var myAck : Long = (clientIsn + 1) and 0xFFFF_FFFFL
 
@@ -250,12 +254,14 @@ class TunBridge(
 
         suspend fun connect() = withContext(Dispatchers.IO) {
             vpnService.protect(socket)
-            socket.connect(InetSocketAddress("127.0.0.1", socksPort), 6_000)
-            socket.soTimeout         = 0          // blocking reads — no idle timeout
-            socket.tcpNoDelay        = true       // disable Nagle for low latency
-            socket.keepAlive         = true       // OS-level TCP keep-alive — prevents NAT/ISP from silently killing idle connections
-            socket.receiveBufferSize = 131072     // 128 KB receive buffer
-            socket.sendBufferSize    = 131072     // 128 KB send buffer
+            socket.connect(InetSocketAddress("127.0.0.1", socksPort), CONNECT_TIMEOUT_MS)
+
+            // Socket tuning for stability and low-latency
+            socket.soTimeout         = STALL_TIMEOUT_MS  // stall detection timeout
+            socket.tcpNoDelay        = true               // disable Nagle for low latency
+            socket.keepAlive         = true               // OS TCP keep-alive (prevents NAT drops)
+            socket.receiveBufferSize = 131_072             // 128 KB receive buffer
+            socket.sendBufferSize    = 131_072             // 128 KB send buffer
 
             val inp = socket.getInputStream()
             val out = socket.getOutputStream()
@@ -263,7 +269,7 @@ class TunBridge(
             // SOCKS5 negotiation — no-auth method
             out.write(byteArrayOf(0x05, 0x01, 0x00))
             out.flush()
-            inp.readExact(2)   // server selects method
+            inp.readExact(2)
 
             // SOCKS5 CONNECT — ATYP=0x01 (IPv4)
             val req = ByteArray(10)
@@ -273,17 +279,13 @@ class TunBridge(
             req[9] = (dstPort and 0xFF).toByte()
             out.write(req); out.flush()
 
-            // Read SOCKS5 reply header + bound address
             val rHdr = inp.readExact(4)
             if (rHdr[1] != 0x00.toByte())
                 throw Exception("SOCKS5 refused code=${rHdr[1].toInt() and 0xFF}")
             when (rHdr[3].toInt() and 0xFF) {
-                0x01 -> inp.readExact(6)    // IPv4 (4 bytes) + port (2)
-                0x03 -> {
-                    val dlen = inp.readExact(1)[0].toInt() and 0xFF
-                    inp.readExact(dlen + 2) // domain + port
-                }
-                0x04 -> inp.readExact(18)   // IPv6 (16) + port (2)
+                0x01 -> inp.readExact(6)
+                0x03 -> { val dlen = inp.readExact(1)[0].toInt() and 0xFF; inp.readExact(dlen + 2) }
+                0x04 -> inp.readExact(18)
             }
 
             alive = true
@@ -296,9 +298,9 @@ class TunBridge(
                 seq = mySeq, ack = myAck,
                 flags = FLAG_SYN or FLAG_ACK
             ))
-            mySeq = (mySeq + 1) and 0xFFFF_FFFFL   // SYN counts as 1 seq byte
+            mySeq = (mySeq + 1) and 0xFFFF_FFFFL
 
-            // ── Device→Proxy writer (reads from Channel, writes to SOCKS5 socket) ──
+            // ── Device→Proxy writer ───────────────────────────────────────────
             val writerJob = launch {
                 try {
                     for (chunk in toProxy) {
@@ -306,19 +308,29 @@ class TunBridge(
                         out.flush()
                     }
                 } catch (e: Exception) {
-                    if (alive) Log.w(TAG, "proxy write error ${dstIp.ip}:$dstPort — ${e.message}")
+                    if (alive && !VpnLogManager.isReconnecting.get()) {
+                        Log.w(TAG, "proxy write ${dstIp.ip}:$dstPort — ${e.message}")
+                    }
                 }
             }
 
-            // ── Proxy→Device reader (crafts IP+TCP and writes to TUN) ──────────
-            // Uses a larger read buffer for better throughput (64 KB chunks)
+            // ── Proxy→Device reader ───────────────────────────────────────────
+            // socket.soTimeout = STALL_TIMEOUT_MS means SocketTimeoutException after
+            // STALL_TIMEOUT_MS of inactivity — connection declared stalled and closed.
             val rbuf = ByteArray(65536)
             try {
                 while (alive) {
-                    val len = inp.read(rbuf)
+                    val len = try {
+                        inp.read(rbuf)
+                    } catch (e: java.net.SocketTimeoutException) {
+                        // Stall detected — no data for STALL_TIMEOUT_MS
+                        if (alive && !VpnLogManager.isReconnecting.get()) {
+                            Log.d(TAG, "Stall timeout ${dstIp.ip}:$dstPort — closing session")
+                        }
+                        -1  // treat as EOF
+                    }
                     if (len <= 0) break
                     val data = rbuf.copyOf(len)
-                    // Build a valid IP+TCP DATA packet and inject it back to TUN
                     sendToTun(buildTcp(
                         sIp = dstIp, sPort = dstPort,
                         dIp = srcIp, dPort = srcPort,
@@ -328,12 +340,13 @@ class TunBridge(
                     mySeq = (mySeq + len) and 0xFFFF_FFFFL
                 }
             } catch (e: Exception) {
-                if (alive) Log.d(TAG, "proxy read end ${dstIp.ip}:$dstPort — ${e.message}")
+                if (alive && !VpnLogManager.isReconnecting.get()) {
+                    Log.d(TAG, "proxy read end ${dstIp.ip}:$dstPort — ${e.message}")
+                }
             } finally {
                 alive = false
                 writerJob.cancel()
                 toProxy.close()
-                // Notify device with FIN+ACK so TCP closes cleanly
                 runCatching {
                     sendToTun(buildTcp(
                         sIp = dstIp, sPort = dstPort,
@@ -350,14 +363,8 @@ class TunBridge(
         // ── Called from TUN read loop ─────────────────────────────────────────
 
         /**
-         * Called when the device sends TCP data to us.
-         *
-         * CRITICAL: We MUST send a standalone ACK back to the device IMMEDIATELY.
-         * Without this, the device's TCP send-window (typically 64KB) fills up and
-         * it stops transmitting — causing the visible "relay active but no traffic" symptom.
-         *
-         * We send the ACK synchronously (holding the tunLock for a brief moment), then
-         * enqueue the payload for async forwarding to the SOCKS5 proxy.
+         * CRITICAL: Send a standalone ACK back immediately.
+         * Without this the device's TCP send-window fills up → traffic stalls.
          */
         fun onData(payload: ByteArray, seqNum: Long) {
             myAck = (seqNum + payload.size) and 0xFFFF_FFFFL
@@ -371,9 +378,8 @@ class TunBridge(
                 flags = FLAG_ACK
             ))
 
-            // ② Enqueue payload for proxy — use offer, fall back to async send on overflow
+            // ② Enqueue payload for proxy
             if (!toProxy.trySend(payload).isSuccess) {
-                // Channel temporarily full — send via coroutine to avoid blocking read loop
                 scope.launch {
                     try { toProxy.send(payload) } catch (_: Exception) {}
                 }
@@ -424,10 +430,6 @@ class TunBridge(
 
     // ── IP + TCP packet builder ───────────────────────────────────────────────
 
-    /**
-     * Craft a valid IPv4+TCP packet suitable for injecting into the TUN fd.
-     * Computes correct IP and TCP checksums (with pseudo-header).
-     */
     private fun buildTcp(
         sIp: ByteArray, sPort: Int,
         dIp: ByteArray, dPort: Int,
@@ -436,37 +438,29 @@ class TunBridge(
         payload: ByteArray = ByteArray(0)
     ): ByteArray {
         val total = IP_HDR + TCP_HDR + payload.size
-        val buf   = ByteArray(total)   // zero-initialized
+        val buf   = ByteArray(total)
 
-        // ── IPv4 header ───────────────────────────────────────────────────────
-        buf[0] = 0x45.toByte()          // version=4, IHL=5 words (20 bytes)
-        buf[1] = 0x00                   // DSCP / ECN
+        buf[0] = 0x45.toByte()
+        buf[1] = 0x00
         buf.w16(2, total)
-        buf.w16(4, (System.nanoTime() and 0xFFFFL).toInt())  // ID (unique enough)
-        buf[6] = 0x40; buf[7] = 0x00   // DF flag, no fragment
-        buf[8] = 64                    // TTL
-        buf[9] = 6                     // protocol = TCP
-        // bytes 10-11 = checksum — computed below after src/dst are set
+        buf.w16(4, (System.nanoTime() and 0xFFFFL).toInt())
+        buf[6] = 0x40; buf[7] = 0x00
+        buf[8] = 64
+        buf[9] = 6
         sIp.copyInto(buf, 12)
         dIp.copyInto(buf, 16)
         buf.w16(10, checksum(buf, 0, IP_HDR))
 
-        // ── TCP header ────────────────────────────────────────────────────────
         val T = IP_HDR
         buf.w16(T,     sPort)
         buf.w16(T + 2, dPort)
-        buf.w32(T + 4, seq)            // sequence number
-        buf.w32(T + 8, ack)            // acknowledgement number
-        buf[T + 12] = 0x50             // data offset = 5 words = 20 bytes
+        buf.w32(T + 4, seq)
+        buf.w32(T + 8, ack)
+        buf[T + 12] = 0x50
         buf[T + 13] = flags.toByte()
-        buf.w16(T + 14, 65535)         // window size (max — device flow-controls us)
-        // bytes T+16/17 = TCP checksum — computed below after payload copied
-        // bytes T+18/19 = urgent pointer (already 0)
+        buf.w16(T + 14, 65535)
 
-        // ── Payload ───────────────────────────────────────────────────────────
         payload.copyInto(buf, IP_HDR + TCP_HDR)
-
-        // TCP checksum (RFC 793 pseudo-header: srcIP + dstIP + 0x00 + proto + tcp segment len)
         buf.w16(T + 16, tcpChecksum(sIp, dIp, buf, T, TCP_HDR + payload.size))
 
         return buf
@@ -486,16 +480,15 @@ class TunBridge(
         return (sum.inv() and 0xFFFF).toInt()
     }
 
-    /** TCP checksum computed over pseudo-header + TCP segment (checksum field zeroed). */
     private fun tcpChecksum(sIp: ByteArray, dIp: ByteArray, buf: ByteArray, tcpOff: Int, tcpLen: Int): Int {
         val ph = ByteArray(12 + tcpLen)
         sIp.copyInto(ph, 0)
         dIp.copyInto(ph, 4)
-        ph[8] = 0x00; ph[9] = 0x06            // protocol = TCP
+        ph[8] = 0x00; ph[9] = 0x06
         ph[10] = (tcpLen ushr 8).toByte()
         ph[11] = (tcpLen and 0xFF).toByte()
         buf.copyInto(ph, 12, tcpOff, tcpOff + tcpLen)
-        ph[12 + 16] = 0; ph[12 + 17] = 0     // zero TCP checksum field
+        ph[12 + 16] = 0; ph[12 + 17] = 0
         return checksum(ph, 0, ph.size)
     }
 
@@ -515,31 +508,26 @@ class TunBridge(
 
     // ── ByteArray extension helpers ───────────────────────────────────────────
 
-    /** Format 4-byte IPv4 address as dotted decimal. */
     private val ByteArray.ip: String
         get() = "%d.%d.%d.%d".format(
             this[0].toInt() and 0xFF, this[1].toInt() and 0xFF,
             this[2].toInt() and 0xFF, this[3].toInt() and 0xFF
         )
 
-    /** Read 2-byte big-endian unsigned short as Int. */
     private fun ByteArray.u16(off: Int): Int =
         ((this[off].toInt() and 0xFF) shl 8) or (this[off + 1].toInt() and 0xFF)
 
-    /** Read 4-byte big-endian unsigned int as Long (for seq/ack numbers). */
     private fun ByteArray.u32L(off: Int): Long =
         ((this[off].toLong() and 0xFF) shl 24) or
         ((this[off + 1].toLong() and 0xFF) shl 16) or
         ((this[off + 2].toLong() and 0xFF) shl 8) or
         (this[off + 3].toLong() and 0xFF)
 
-    /** Write 2-byte big-endian unsigned short. */
     private fun ByteArray.w16(off: Int, v: Int) {
         this[off]     = (v ushr 8 and 0xFF).toByte()
         this[off + 1] = (v        and 0xFF).toByte()
     }
 
-    /** Write 4-byte big-endian unsigned int (seq/ack, stored as Long). */
     private fun ByteArray.w32(off: Int, v: Long) {
         this[off]     = (v ushr 24 and 0xFF).toByte()
         this[off + 1] = (v ushr 16 and 0xFF).toByte()

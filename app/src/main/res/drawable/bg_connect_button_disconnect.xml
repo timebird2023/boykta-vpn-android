@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- DISCONNECT state — same neon red/magenta (active/connected) -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
     <solid android:color="#FF0055" />
-    <stroke android:width="2dp" android:color="#FFFFFF33" />
+    <stroke android:width="3dp" android:color="#FF005588" />
 </shape>

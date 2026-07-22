@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Core background palette (Boykta Net dark neon) -->
-    <color name="background">#0B0E14</color>
-    <color name="background_alt">#121622</color>
-    <color name="card">#1A1F2C</color>
-    <color name="surface">#1A1F2C</color>
-    <color name="surface_variant">#1E2535</color>
-    <color name="border">#00F2FE33</color>
-    <color name="divider">#1E2A44</color>
+    <!-- ══ Core background palette — Pure Pitch Black neon dark ══ -->
+    <color name="background">#050508</color>
+    <color name="background_alt">#0A0D14</color>
+    <color name="card">#0F131D</color>
+    <color name="surface">#0F131D</color>
+    <color name="surface_variant">#151C2B</color>
+    <color name="border">#00F2FE2A</color>
+    <color name="divider">#162033</color>
 
-    <!-- Brand accents -->
+    <!-- ══ Brand accents — Electric Cyan + Neon Red ══ -->
     <color name="primary">#00F2FE</color>
     <color name="primary_dark">#00AABB</color>
     <color name="accent">#FF0055</color>
@@ -17,25 +17,25 @@
     <color name="neon_yellow">#FFCC00</color>
     <color name="error">#FF0055</color>
 
-    <!-- Text -->
-    <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#6B7FA8</color>
-    <color name="text_disabled">#3A4A6A</color>
+    <!-- ══ Text ══ -->
+    <color name="text_primary">#F0F4FF</color>
+    <color name="text_secondary">#5A6E96</color>
+    <color name="text_disabled">#2C3A55</color>
     <color name="text_on_primary">#000000</color>
     <color name="text_on_accent">#FFFFFF</color>
 
-    <!-- Status dots -->
+    <!-- ══ Status dots ══ -->
     <color name="dot_connected">#00F2FE</color>
     <color name="dot_disconnected">#FF0055</color>
-    <color name="dot_expired">#3A4A6A</color>
+    <color name="dot_expired">#2C3A55</color>
 
-    <!-- Semantic -->
-    <color name="dialog_background">#CC000000</color>
-    <color name="log_terminal_bg">#0A0C12</color>
+    <!-- ══ Semantic ══ -->
+    <color name="dialog_background">#DD000000</color>
+    <color name="log_terminal_bg">#040608</color>
 
-    <!-- Android system bars -->
+    <!-- ══ Android system bars ══ -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="statusBarColor">#0B0E14</color>
-    <color name="navigationBarColor">#0B0E14</color>
+    <color name="statusBarColor">#050508</color>
+    <color name="navigationBarColor">#050508</color>
 </resources>

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- CONNECT state — neon red/magenta core matching screenshots -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="#00F2FE" />
-    <stroke android:width="2dp" android:color="#FFFFFF33" />
+    <solid android:color="#FF0055" />
+    <stroke android:width="3dp" android:color="#FF005588" />
 </shape>

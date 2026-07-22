@@ -62,8 +62,7 @@ object XrayManager {
                 false
             }
         } catch (e: Exception) {
-            VpnLogManager.error("Xray exception: ${e.message}")
-            VpnLogManager.error("Stack: ${e.stackTraceToString().take(300)}")
+            VpnLogManager.error("Xray exception: ${e.javaClass.simpleName} — ${e.message?.take(120)}")
             Log.e(TAG, "Exception starting Xray", e)
             false
         }

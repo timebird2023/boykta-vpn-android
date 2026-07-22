@@ -21,12 +21,13 @@ import java.util.Locale
  * Sections:
  *   1. Device & system info   — Build.MODEL, VERSION, ABI
  *   2. Network interfaces     — real kernel iface list via NetworkInterface
- *   3. Tunnel ping            — real HTTPS GET through Xray SOCKS5 proxy
+ *   3. TCP proxy liveness     — fast loopback probe (< 200 ms)
+ *   4. Tunnel ping            — real HTTPS GET through Xray SOCKS5 proxy
  *
  * Logging policy:
- *   ✅ Clean milestone messages (INFO / SUCCESS / WARN)
- *   ❌ Raw Java stack frames are NEVER shown in the terminal log.
- *      Instead: one-line error summary + root cause class/message.
+ *   [OK]   — clean milestone messages
+ *   [WARN] — single-line error summary, no raw stack frames
+ *   Errors during reconnect window are fully suppressed (isReconnecting flag).
  */
 object TunnelPingChecker {
 
@@ -37,7 +38,7 @@ object TunnelPingChecker {
     private const val PING_URL_2 = "https://www.gstatic.com/generate_204"
     private const val PING_URL_3 = "https://www.google.com/generate_204"
 
-    // Timeouts — generous for high-latency VPN servers
+    // Timeouts
     private const val HTTPS_TIMEOUT_MS = 12_000     // 12 s for full TLS round-trip
     private const val TCP_PROBE_TIMEOUT = 2_000      // 2 s for local loopback TCP check
 
@@ -75,10 +76,8 @@ object TunnelPingChecker {
 
     /**
      * Quick TCP connect to 127.0.0.1:socksPort — confirms Xray is listening.
-     * Much faster than a full HTTPS ping (completes in <200 ms on loopback).
-     * Does NOT need protect() — loopback traffic bypasses the TUN interface.
-     *
-     * @return true if Xray accepted the connection, false if refused/timed-out.
+     * Completes in < 200 ms on loopback. Does NOT need protect().
+     * Returns true if Xray accepted the connection, false otherwise.
      */
     fun isProxyAlive(socksPort: Int): Boolean {
         return try {
@@ -93,22 +92,26 @@ object TunnelPingChecker {
 
     /**
      * Execute a real HTTPS GET routed through the Xray SOCKS5 proxy.
-     *
-     * Routes via Proxy(SOCKS, 127.0.0.1:socksPort) so the request goes through
-     * Xray-core rather than bypassing the tunnel (addDisallowedApplication).
+     * Silent if VpnLogManager.isReconnecting is set (suppresses spam during
+     * the reconnect window when Xray is stopped and SOCKS5 isn't responding).
      *
      * @return true if tunnel is healthy (HTTP 2xx/204), false on any failure.
      */
     suspend fun pingAndLog(socksPort: Int): Boolean = withContext(Dispatchers.IO) {
-        val (code, ms) = pingThroughTunnel(socksPort)
+        // Don't attempt ping during reconnect window
+        if (VpnLogManager.isReconnecting.get()) return@withContext false
+
+        val (code, _) = pingThroughTunnel(socksPort)
         when {
-            code in 200..299 || code == 204 -> true   // already logged as ✅
+            code in 200..299 || code == 204 -> true
             code < 0 -> {
-                VpnLogManager.warn("[WARN] Tunnel check failed — no response from SOCKS5:$socksPort")
+                if (!VpnLogManager.isReconnecting.get()) {
+                    VpnLogManager.warn("Tunnel check failed — no response from SOCKS5:$socksPort")
+                }
                 false
             }
             else -> {
-                VpnLogManager.warn("[WARN] Tunnel replied HTTP $code — proxy may be filtering")
+                VpnLogManager.warn("Tunnel replied HTTP $code — proxy may be filtering")
                 false
             }
         }
@@ -116,7 +119,9 @@ object TunnelPingChecker {
 
     private suspend fun pingThroughTunnel(socksPort: Int): Pair<Int, Long> =
         withContext(Dispatchers.IO) {
+            if (VpnLogManager.isReconnecting.get()) return@withContext Pair(-1, -1L)
             for (url in listOf(PING_URL_1, PING_URL_2, PING_URL_3)) {
+                if (VpnLogManager.isReconnecting.get()) return@withContext Pair(-1, -1L)
                 val result = doHttpPing(url, socksPort)
                 if (result.first > 0) return@withContext result
             }
@@ -124,6 +129,9 @@ object TunnelPingChecker {
         }
 
     private fun doHttpPing(urlStr: String, socksPort: Int): Pair<Int, Long> {
+        // Abort if reconnect started while we were waiting
+        if (VpnLogManager.isReconnecting.get()) return Pair(-1, -1L)
+
         return try {
             val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort))
             val conn  = java.net.URL(urlStr).openConnection(proxy) as HttpURLConnection
@@ -148,16 +156,17 @@ object TunnelPingChecker {
                 301, 302 -> "Redirect"
                 else     -> "HTTP $code"
             }
-            // ✅ Clean milestone — no stack traces
-            VpnLogManager.success("HTTP Ping $code $label (${ms}ms) [$ts]")
+            VpnLogManager.success("Ping $code $label — ${ms}ms via SOCKS5 [$ts]")
             Pair(code, ms)
 
         } catch (e: Exception) {
-            // ── Clean one-line error summary — NO raw stack frames ──────────
-            // Root cause only: exception class + message. Frames go to LogCat only.
+            // During reconnect: silently skip
+            if (VpnLogManager.isReconnecting.get()) return Pair(-1, -1L)
+
+            // Clean one-line summary — NO raw stack frames shown to user
             val cause = e.javaClass.simpleName
             val msg   = e.message?.substringBefore("\n")?.take(80) ?: "unknown"
-            VpnLogManager.warn("[WARN] Ping via SOCKS5 failed → $cause: $msg [$ts]")
+            VpnLogManager.warn("Ping via SOCKS5 failed → $cause: $msg [$ts]")
             Pair(-1, -1L)
         }
     }

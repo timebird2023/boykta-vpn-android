@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Middle glow ring — stronger neon cyan -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="#0000F2FE" />
-    <stroke android:width="2dp" android:color="#2800F2FE" />
+    <solid android:color="#0A00F2FE" />
+    <stroke android:width="2dp" android:color="#4000F2FE" />
 </shape>
