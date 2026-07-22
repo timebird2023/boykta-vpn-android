@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
+from aiohttp import web as aio_web
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -53,8 +54,9 @@ from telegram.ext import (
 
 BOT_TOKEN    = os.environ.get("BOT_TOKEN", "")
 DEVELOPER_ID = int(os.environ.get("DEVELOPER_ID", "0"))
-BACKEND_URL  = os.environ.get("BACKEND_URL", "https://boykta.boykta.dpdns.org")
-BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "25477"))
+BACKEND_URL  = os.environ.get("BACKEND_URL", "http://localhost:25227")
+BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "25227"))
+API_PORT     = int(os.environ.get("API_PORT", "25227"))
 CF_TOKEN     = os.environ.get("CF_TOKEN", "")
 
 if not BOT_TOKEN:
@@ -1056,6 +1058,104 @@ async def cmd_unsubscribe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+# ── HTTP API Server (port 25227 → Cloudflare tunnel) ─────────────────────────
+
+async def _api_health(request):
+    return aio_web.json_response({"status": "ok", "ts": now_ts()})
+
+async def _api_get_servers(request):
+    active = [s for s in _servers if s.get("active", True)]
+    return aio_web.json_response({"servers": active})
+
+async def _api_get_announcements(request):
+    """Return announcements with proxied media URLs (token never exposed to client)."""
+    ads = []
+    for ad in _announcement_queue:
+        media_urls = [
+            f"https://boykta.boykta.dpdns.org/api/media/{fid}"
+            for fid in ad.get("file_ids", [])
+        ]
+        ads.append({
+            "id": ad["id"],
+            "type": ad.get("type", "image"),
+            "media_urls": media_urls,
+            "caption": ad.get("caption", ""),
+            "created_at": ad.get("created_at", ""),
+        })
+    return aio_web.json_response({"announcements": ads})
+
+async def _api_post_announcements(request):
+    """Receive announcement push from the bot itself (localhost only)."""
+    try:
+        data = await request.json()
+        # If pushed with telegram_file_ids, store/merge into queue
+        file_ids = data.get("telegram_file_ids") or []
+        if file_ids:
+            ad_id = _next_ad_id()
+            _announcement_queue.append({
+                "id": ad_id,
+                "type": data.get("media_type", "image"),
+                "file_ids": file_ids,
+                "caption": data.get("message", ""),
+                "created_at": now_ts(),
+            })
+        return aio_web.json_response({"ok": True})
+    except Exception as exc:
+        log.warning(f"POST /api/announcements error: {exc}")
+        return aio_web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+async def _api_media_proxy(request):
+    """Proxy Telegram media to client without exposing the bot token in URLs."""
+    file_id = request.match_info["file_id"]
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Step 1: resolve file_id → file_path (server-side, token stays here)
+            r = await client.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getFile",
+                params={"file_id": file_id},
+            )
+            result = r.json().get("result", {})
+            file_path = result.get("file_path")
+            if not file_path:
+                return aio_web.Response(status=404, text="File not found")
+            # Step 2: stream content back to client
+            r2 = await client.get(
+                f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+            )
+            content_type = r2.headers.get("content-type", "application/octet-stream")
+            return aio_web.Response(body=r2.content, content_type=content_type)
+    except Exception as exc:
+        log.warning(f"Media proxy error for {file_id}: {exc}")
+        return aio_web.Response(status=502, text="Upstream error")
+
+async def _api_webhook_sink(request):
+    """Absorb stray POST /webhook hits (e.g. Facebook crawler) silently."""
+    return aio_web.Response(status=200, text="ok")
+
+def _build_web_app() -> aio_web.Application:
+    app = aio_web.Application()
+    app.router.add_get("/health",                  _api_health)
+    app.router.add_get("/api/servers",             _api_get_servers)
+    app.router.add_get("/api/announcements",       _api_get_announcements)
+    app.router.add_post("/api/announcements",      _api_post_announcements)
+    app.router.add_get("/api/media/{file_id}",     _api_media_proxy)
+    app.router.add_post("/webhook",                _api_webhook_sink)
+    return app
+
+
+async def _run_http_server():
+    """Run the aiohttp API server on API_PORT (default 25227)."""
+    web_app = _build_web_app()
+    runner = aio_web.AppRunner(web_app)
+    await runner.setup()
+    site = aio_web.TCPSite(runner, "0.0.0.0", API_PORT)
+    await site.start()
+    log.info(f"API server listening on port {API_PORT}")
+    # Run forever
+    while True:
+        await asyncio.sleep(3600)
+
+
 def main():
     log.info("Starting Boykta VPN Telegram Bot...")
     app = Application.builder().token(BOT_TOKEN).build()
@@ -1106,7 +1206,23 @@ def main():
     app.post_init = post_init
 
     log.info(f"Bot running — Developer ID: {DEVELOPER_ID}")
-    app.run_polling(drop_pending_updates=True)
+
+    async def run_all():
+        # Start HTTP API server (non-blocking)
+        http_task = asyncio.create_task(_run_http_server())
+
+        # Run Telegram polling (blocks until stopped)
+        async with app:
+            await app.start()
+            await app.updater.start_polling(drop_pending_updates=True)
+            log.info("Polling started — waiting for updates")
+            await asyncio.Event().wait()   # run forever
+            await app.updater.stop()
+            await app.stop()
+
+        http_task.cancel()
+
+    asyncio.run(run_all())
 
 
 if __name__ == "__main__":
