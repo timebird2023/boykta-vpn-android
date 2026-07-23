@@ -202,8 +202,12 @@ object XrayManager {
                     })
                     put("sniffing", JSONObject().apply {
                         put("enabled", true)
+                        // "quic" removed: QUIC sniffing inspects every UDP packet for a
+                        // QUIC header — this adds latency and CPU overhead for game UDP
+                        // traffic that uses custom binary protocols (Free Fire, etc.).
+                        // http + tls is sufficient for domain-aware routing.
                         put("destOverride", JSONArray().apply {
-                            put("http"); put("tls"); put("quic")
+                            put("http"); put("tls")
                         })
                         // KEY FIX for Chrome: route by domain name, but keep the
                         // outbound destination as the original IP to avoid re-resolution.

@@ -86,6 +86,10 @@ class BoykVpnService : VpnService() {
     private val isConnected    = AtomicBoolean(false)
     private val isReconnecting = AtomicBoolean(false)
     private val reconnectCount = AtomicInteger(0)
+    // Set to true when the user explicitly requests disconnect.
+    // Checked in triggerAutoReconnect / restartXrayOnly to prevent the keep-alive
+    // loop from re-connecting after stopVpn() sets isReconnecting back to false.
+    private val userRequestedStop = AtomicBoolean(false)
     // Counts consecutive HTTP-ping failures; resets on success or fast-reconnect.
     private val pingFailCount  = AtomicInteger(0)
     private val serviceScope   = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -128,6 +132,7 @@ class BoykVpnService : VpnService() {
     }
 
     fun connectToServer(server: Server) {
+        userRequestedStop.set(false)   // clear any previous user-stop flag on new connection
         currentServer = server
         startVpn(server)
     }
@@ -432,6 +437,7 @@ class BoykVpnService : VpnService() {
     // The TUN fd stays open so Android's network stack keeps routing through us.
 
     private fun restartXrayOnly(reason: String) {
+        if (userRequestedStop.get()) return      // user pressed Disconnect — don't restart
         if (!isReconnecting.compareAndSet(false, true)) return
         val server = currentServer ?: run { isReconnecting.set(false); return }
 
@@ -466,6 +472,7 @@ class BoykVpnService : VpnService() {
     // ── Auto-reconnect (full teardown — used for Xray crash / fast-restart failure) ─
 
     private fun triggerAutoReconnect(reason: String) {
+        if (userRequestedStop.get()) return      // user pressed Disconnect — don't restart
         if (!isReconnecting.compareAndSet(false, true)) return
 
         serviceScope.launch {
@@ -512,16 +519,23 @@ class BoykVpnService : VpnService() {
     // ── VPN teardown ──────────────────────────────────────────────────────────
 
     fun stopVpn() {
+        // Set this BEFORE launching the coroutine so that any in-flight keep-alive
+        // iteration that checks isReconnecting==false won't race into triggerAutoReconnect.
+        userRequestedStop.set(true)
+
         serviceScope.launch {
             VpnLogManager.isReconnecting.set(true)
 
             isRunning = false
             isConnected.set(false)
-            isReconnecting.set(false)
-            reconnectCount.set(0)
-
+            // Cancel the keep-alive job FIRST — before resetting isReconnecting.
+            // This prevents a racing keep-alive iteration from slipping past the
+            // isReconnecting guard and calling triggerAutoReconnect after we stop.
             keepAliveJob?.cancel();    keepAliveJob = null
             networkChangeJob?.cancel(); networkChangeJob = null
+
+            isReconnecting.set(false)
+            reconnectCount.set(0)
 
             TrafficCounter.stop()
             networkMonitor?.stop();  networkMonitor = null

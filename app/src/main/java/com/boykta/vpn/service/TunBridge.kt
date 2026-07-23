@@ -70,8 +70,8 @@ class TunBridge(
         private const val IP6_HDR    = 40   // fixed IPv6 header
         private const val TCP_HDR    = 20
 
-        // Close idle TCP/UDP sessions after 180 s. Game sessions regularly use
-        // long periods with no datagrams, so this is deliberately not aggressive.
+        // Close idle TCP sessions after 180 s. Long timeout is needed for gaming
+        // connections that can have quiet periods between bursts.
         // Uses SystemClock.elapsedRealtime() — immune to system-clock adjustments.
         private const val STALL_TIMEOUT_MS  = 180_000L
 
@@ -79,8 +79,18 @@ class TunBridge(
         private const val CONNECT_TIMEOUT_MS = 15_000
 
         // Safety cap: prevent memory exhaustion from UDP session floods.
-        // Oldest session is evicted when the limit is reached.
-        private const val MAX_UDP_SESSIONS = 512
+        // Increased to 2048 to accommodate gaming traffic (Free Fire, etc.) alongside
+        // the many short-lived DNS sessions without evicting active game sessions.
+        private const val MAX_UDP_SESSIONS = 2048
+
+        // DNS queries (port 53) are always short-lived — server replies in <1 s.
+        // Use a short idle timeout to reclaim slots quickly and avoid filling the cap
+        // with stale DNS associations that block new game UDP sessions.
+        private const val DNS_STALL_TIMEOUT_MS = 30_000L
+
+        // Non-DNS UDP (games, streaming) can have long quiet periods between packets.
+        // Keep the slot alive for 3 minutes so the source port stays stable.
+        private const val GAME_STALL_TIMEOUT_MS = 180_000L
     }
 
     private val scope    = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -274,13 +284,16 @@ class TunBridge(
         val key = "${if (isIPv6) 6 else 4}:${srcIp.toAddressKey()}:$srcPort→${dstIp.toAddressKey()}:$dstPort"
         val session = udpSessions[key] ?: synchronized(udpSessions) {
             udpSessions[key] ?: run {
-                // Evict oldest session when at the safety cap to prevent OOM.
+                // Evict the LEAST RECENTLY USED session when at the cap.
+                // ConcurrentHashMap has no insertion order, so firstOrNull() is random —
+                // it can evict an active game session instead of a stale DNS one.
+                // minByOrNull on lastActivity() picks the genuinely stalest slot.
                 if (udpSessions.size >= MAX_UDP_SESSIONS) {
-                    val oldest = udpSessions.entries.firstOrNull()
+                    val oldest = udpSessions.entries.minByOrNull { it.value.lastActivity() }
                     if (oldest != null) {
                         udpSessions.remove(oldest.key)
                         oldest.value.close()
-                        VpnLogManager.warn("UDP session cap reached — evicted ${oldest.key.take(40)}")
+                        VpnLogManager.warn("UDP cap: evicted stale session ${oldest.key.take(40)}")
                     }
                 }
                 UdpSession(
@@ -303,6 +316,10 @@ class TunBridge(
      * are exchanged. Keeping both sockets alive is important for games: it
      * preserves the local source port and allows replies to arrive in either
      * direction instead of waiting for exactly one response per packet.
+     *
+     * DNS sessions (dstPort 53) use a short 30 s idle timeout so their slots
+     * are reclaimed quickly.  All other sessions (games, streaming) use the
+     * full 180 s timeout to survive quiet periods between bursts.
      */
     private inner class UdpSession(
         private val key: String,
@@ -312,12 +329,20 @@ class TunBridge(
         private val dstPort: Int,
         private val isIPv6: Boolean,
     ) {
-        private val queue = Channel<ByteArray>(capacity = 512)
+        // Larger queue: burst game packets must never be dropped on the send side
+        private val queue = Channel<ByteArray>(capacity = 2048)
         private val active = AtomicBoolean(true)
         private var controlSocket: Socket? = null
         private var udpSocket: DatagramSocket? = null
         // Use elapsedRealtime — immune to system clock adjustments (NTP, timezone, etc.)
         @Volatile private var lastActivityElapsed = SystemClock.elapsedRealtime()
+
+        // Exposed for LRU eviction — outer class reads this to pick the stalest session
+        fun lastActivity(): Long = lastActivityElapsed
+
+        // Per-session stall threshold: DNS gets a short slot; games get the full window
+        private val stallTimeoutMs: Long =
+            if (dstPort == 53) DNS_STALL_TIMEOUT_MS else GAME_STALL_TIMEOUT_MS
 
         private val job = scope.launch(Dispatchers.IO) { run() }
 
@@ -390,7 +415,7 @@ class TunBridge(
                 try {
                     for (payload in queue) {
                         if (!active.get()) break
-                        if (SystemClock.elapsedRealtime() - lastActivityElapsed > STALL_TIMEOUT_MS) break
+                        if (SystemClock.elapsedRealtime() - lastActivityElapsed > stallTimeoutMs) break
                         val packet = buildSocksUdpRequest(dstIp, dstPort, payload, isIPv6)
                         udp.send(DatagramPacket(packet, packet.size))
                         lastActivityElapsed = SystemClock.elapsedRealtime()
@@ -430,7 +455,7 @@ class TunBridge(
                         injectUdp4ToTun(remoteIp, reply.port, srcIp, srcPort, reply.payload)
                     }
                 } catch (_: java.net.SocketTimeoutException) {
-                    if (SystemClock.elapsedRealtime() - lastActivityElapsed > STALL_TIMEOUT_MS) {
+                    if (SystemClock.elapsedRealtime() - lastActivityElapsed > stallTimeoutMs) {
                         active.set(false)
                         queue.close()
                         break

@@ -27,11 +27,23 @@ description: Key decisions, bugs found and fixed in BoykVpnService, TunBridge, X
 **Why:** `currentTimeMillis` can jump forward/backward on NTP sync or timezone change, causing sessions to falsely expire or never expire.  
 **How to apply:** `lastActivityElapsed` field + `SystemClock.elapsedRealtime()` everywhere in `UdpSession`.
 
-## UDP session cap — MAX_UDP_SESSIONS = 512
+## UDP session cap — MAX_UDP_SESSIONS = 2048 (was 512)
 
-**Rule:** Evict the oldest `UdpSession` (via `udpSessions.entries.firstOrNull()`) when the map reaches 512 entries before inserting a new one.  
-**Why:** No cap → unbounded memory growth from UDP flood or buggy apps opening thousands of 5-tuples.  
-**How to apply:** Check in `forwardUdp()` inside the `synchronized(udpSessions)` block before constructing a new `UdpSession`.
+**Rule:** Evict the LEAST RECENTLY USED session via `minByOrNull { it.value.lastActivity() }` when the map reaches 2048 entries.  
+**Why:** (1) 512 was too low — DNS creates many short-lived sessions that fill the cap and evict active game sessions. (2) `firstOrNull()` on ConcurrentHashMap has no insertion-order guarantee; it evicts a random entry, which can be an active game session.  
+**How to apply:** `UdpSession` exposes `fun lastActivity(): Long = lastActivityElapsed`. In `forwardUdp()` use `udpSessions.entries.minByOrNull { it.value.lastActivity() }` for eviction.
+
+## DNS UDP sessions — short 30s timeout
+
+**Rule:** DNS `UdpSession` (dstPort == 53) must use `DNS_STALL_TIMEOUT_MS = 30_000L`, not the game-session `GAME_STALL_TIMEOUT_MS = 180_000L`.  
+**Why:** DNS replies in <1 s; holding the session slot for 3 minutes wastes capacity that gaming traffic needs.  
+**How to apply:** `UdpSession.stallTimeoutMs` is set in the constructor: `if (dstPort == 53) DNS_STALL_TIMEOUT_MS else GAME_STALL_TIMEOUT_MS`.
+
+## Disconnect race — userRequestedStop flag
+
+**Rule:** `BoykVpnService` must set `userRequestedStop.set(true)` (AtomicBoolean) at the very start of `stopVpn()`, BEFORE launching the teardown coroutine. Both `triggerAutoReconnect` and `restartXrayOnly` must guard with `if (userRequestedStop.get()) return`.  
+**Why:** `stopVpn()` sets `isReconnecting = false` after cancelling keepAliveJob. Between those two actions, a racing keep-alive iteration that detects Xray down calls `triggerAutoReconnect` — the VPN silently reconnects instead of disconnecting.  
+**How to apply:** `connectToServer()` resets `userRequestedStop.set(false)` on every new user-initiated connection.
 
 ## DNS leak — remove "localhost" from Xray DNS
 
