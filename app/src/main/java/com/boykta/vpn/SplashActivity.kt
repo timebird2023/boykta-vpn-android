@@ -8,8 +8,7 @@ import android.view.animation.ScaleAnimation
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -57,8 +56,8 @@ class SplashActivity : AppCompatActivity() {
             it.startOffset = 600
         })
 
-        // Navigate to MainActivity after delay
-        CoroutineScope(Dispatchers.Main).launch {
+        // Navigate to MainActivity after delay — lifecycleScope auto-cancels on destroy
+        lifecycleScope.launch {
             delay(2_200)
             startActivity(Intent(this@SplashActivity, MainActivity::class.java))
             finish()

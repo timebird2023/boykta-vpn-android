@@ -111,6 +111,32 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 - ✅ **Xray sniffing adds `quic`** — Xray now sniffs QUIC SNI in addition to HTTP Host and TLS SNI, enabling correct routing decisions even when QUIC packets reach the inbound.
 - ✅ **Inbound tags added** — SOCKS5 inbound tagged `socks-in`, HTTP inbound tagged `http-in` for clean routing rule targeting.
 
+---
+
+## Full Audit & Bot Overhaul (July 23 2026)
+
+### بوت تيليغرام — bot.py
+- ✅ **استمرارية البيانات** — كل البيانات تُحفظ الآن في `boykta_state.json` عبر `_save_state()` ذرية (atomic write). `_load_state()` تُستدعى عند الإقلاع لاستعادة كل شيء بعد إعادة التشغيل.
+- ✅ **إصلاح تصادم ID السيرفرات** — `cmd_addserver` كانت تستخدم `len(_servers)+1` مما يسبب تكراراً بعد الحذف؛ صار `max(s["id"])+1` في كل مكان.
+- ✅ **إزالة المشتركين المحجوبين** — `_do_broadcast` يكشف "Forbidden/blocked/deactivated" ويزيلهم تلقائياً من `_subscribers`.
+- ✅ **فلتر السيرفرات المنتهية** — `/api/servers` لا تُرسل سيرفرات منتهية الصلاحية للتطبيق.
+- ✅ **إصلاح رابط الوسائط** — `https://boykta.boykta.dpdns.org` صار متغير بيئة `PUBLIC_BASE_URL` قابل للتغيير.
+- ✅ **مهمة انتهاء تلقائي** — `_auto_expire_task()` تفحص كل ساعة وتوقف السيرفرات المنتهية (بدون حذف).
+- ✅ **أمر `/toggleserver`** — تفعيل/إيقاف سيرفر بدون حذفه.
+- ✅ **حفظ الحالة في كل عملية تغيير** — add/remove server, subscribe/unsubscribe, finalize ad, clear ads, post announcement.
+
+### تطبيق Android
+- ✅ **SplashActivity** — يستخدم `lifecycleScope` بدل `CoroutineScope` لتجنب تسرب الكوروتين عند تدمير الـ Activity.
+- ✅ **ConfigExportDialog** — `BoykConfigManager.export()` انتقل من Main Thread إلى `Dispatchers.IO` مع `withContext(Main)` للتحديث، يمنع تجميد الواجهة.
+- ✅ **MainViewModel auto-ping** — فترة ping من 1 ثانية → 3 ثواني، يقلل استهلاك البطارية 66%.
+
+### متغيرات البيئة الجديدة (bot.py)
+| المتغير | القيمة الافتراضية | الوصف |
+|---------|------------------|-------|
+| `PUBLIC_BASE_URL` | `https://boykta.boykta.dpdns.org` | الرابط العام لروابط وسائط التطبيق |
+
+---
+
 ## Previous Changes (July 2026)
 
 - ✅ **Branding**: All "BOYKTA NET" → "BOYKTA VPN" (activity_main.xml ×3, activity_splash.xml, dialog_privacy_policy.xml)

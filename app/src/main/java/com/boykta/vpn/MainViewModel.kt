@@ -130,7 +130,8 @@ class MainViewModel @Inject constructor(
             while (isActive) {
                 val ms = LatencyChecker.measureMs()
                 pingMs.value = ms
-                delay(1_000L)
+                // 3 s interval — fast enough for live display, gentle on battery
+                delay(3_000L)
             }
         }
     }

@@ -59,6 +59,10 @@ BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "25227"))
 API_PORT     = int(os.environ.get("API_PORT", "25227"))
 CF_TOKEN     = os.environ.get("CF_TOKEN", "")
 
+# Public base URL for media proxy links sent to the Android app.
+# Must match your Cloudflare tunnel domain (no trailing slash).
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://boykta.boykta.dpdns.org")
+
 if not BOT_TOKEN:
     raise RuntimeError(
         "BOT_TOKEN environment variable is not set. "
@@ -89,14 +93,61 @@ logging.basicConfig(
 )
 log = logging.getLogger("BoyktaBot")
 
-# ── In-memory state (replace with DB for production) ─────────────────────────
+# ── Persistent state — JSON file ─────────────────────────────────────────────
+# All state is saved to DATA_FILE so it survives bot restarts.
+
+DATA_FILE = "boykta_state.json"
 
 _servers: list[dict] = []          # {"id", "name", "uri", "expires_at", "active"}
 _subscribers: set[int] = set()     # Telegram user IDs who subscribed
 _broadcast_log: list[str] = []     # History of broadcasts
 _user_log: list[dict] = []         # {"user_id", "action", "ts"}
 
-# ConversationHandler states
+# ── State persistence helpers ─────────────────────────────────────────────────
+
+def _save_state() -> None:
+    """Persist all mutable state to DATA_FILE so restarts don't wipe data."""
+    try:
+        payload = {
+            "servers":            _servers,
+            "subscribers":        list(_subscribers),
+            "broadcast_log":      _broadcast_log[-500:],   # keep last 500 entries
+            "user_log":           _user_log[-1000:],       # keep last 1000 events
+            "announcement_queue": _announcement_queue,
+            "ad_id_counter":      _ad_id_counter,
+        }
+        tmp = DATA_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, DATA_FILE)   # atomic write — prevents corrupt file on crash
+    except Exception as exc:
+        log.error(f"_save_state failed: {exc}")
+
+
+def _load_state() -> None:
+    """Load persisted state from DATA_FILE on startup."""
+    global _ad_id_counter
+    if not os.path.exists(DATA_FILE):
+        log.info("No state file found — starting fresh.")
+        return
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        _servers.extend(payload.get("servers", []))
+        _subscribers.update(payload.get("subscribers", []))
+        _broadcast_log.extend(payload.get("broadcast_log", []))
+        _user_log.extend(payload.get("user_log", []))
+        _announcement_queue.extend(payload.get("announcement_queue", []))
+        _ad_id_counter = payload.get("ad_id_counter", 0)
+        log.info(
+            f"State loaded — {len(_servers)} servers, "
+            f"{len(_subscribers)} subscribers, "
+            f"{len(_announcement_queue)} ads"
+        )
+    except Exception as exc:
+        log.error(f"_load_state failed: {exc}")
+
+# ── ConversationHandler states ────────────────────────────────────────────────
 (
     AWAIT_BROADCAST_TEXT,
     AWAIT_SERVER_NAME,
@@ -316,6 +367,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     _subscribers.add(uid)
     _user_log.append({"user_id": uid, "action": "start", "ts": now_ts()})
+    _save_state()
 
     is_dev = uid == DEVELOPER_ID
     greeting = (
@@ -474,6 +526,7 @@ async def cb_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             before = len(_announcement_queue)
             _announcement_queue[:] = [a for a in _announcement_queue if a["id"] != aid]
             if len(_announcement_queue) < before:
+                _save_state()
                 await q.message.edit_text(f"🗑 تم حذف الإعلان ID {aid}.")
             else:
                 await q.message.reply_text(f"❌ لا يوجد إعلان بالـ ID {aid}.")
@@ -516,23 +569,37 @@ async def _do_broadcast(
 ):
     sent = 0
     failed = 0
+    blocked: set[int] = set()   # users who blocked the bot — remove from list
+
     for uid in list(_subscribers):
         try:
             await ctx.bot.send_message(
                 uid, f"📣 *{title}*\n\n{text}", parse_mode="Markdown"
             )
             sent += 1
-        except Exception:
+        except Exception as exc:
+            err = str(exc).lower()
+            # Forbidden / blocked / deactivated → remove permanently
+            if any(k in err for k in ("forbidden", "blocked", "deactivated", "bot was kicked")):
+                blocked.add(uid)
             failed += 1
+
+    if blocked:
+        _subscribers.difference_update(blocked)
+        log.info(f"Removed {len(blocked)} blocked/inactive subscribers")
+
     _broadcast_log.append(f"{now_ts()} | {title}: {text[:60]}")
+    _save_state()
+
     # Push announcement to app backend so it shows as in-app ad after connection
     ok = await push_broadcast_to_backend(title, text, media_urls=media_urls, media_type=media_type)
     backend_tag = "✅ Backend (إعلان داخل التطبيق)" if ok else "❌ Backend failed"
+    removed_tag = f"\n🗑 أُزيل {len(blocked)} مشترك غير نشط" if blocked else ""
     await update.message.reply_text(
         f"📣 تم البث\n\n"
         f"أُرسل إلى: {sent} مستخدم\n"
         f"فشل: {failed}\n"
-        f"{backend_tag}"
+        f"{backend_tag}{removed_tag}"
     )
 
 # ── /setad — Add a media announcement (photos carousel or video) ───────────────
@@ -577,6 +644,7 @@ async def cmd_clearads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Clear all queued announcements."""
     count = len(_announcement_queue)
     _announcement_queue.clear()
+    _save_state()
     await update.message.reply_text(f"🗑 تم حذف {count} إعلان.")
 
 
@@ -623,6 +691,7 @@ async def _finalize_ad(update, ctx, pending: dict):
         "created_at": now_ts(),
     }
     _announcement_queue.append(ad)
+    _save_state()
 
     # Push to backend using opaque file_ids, NOT token-bearing download URLs.
     # The backend resolves file_ids server-side via its own bot-token copy.
@@ -658,7 +727,8 @@ async def cmd_addserver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name     = ctx.args[0]
     uri      = ctx.args[1]
     days     = int(ctx.args[2]) if len(ctx.args) > 2 else 30
-    server_id = len(_servers) + 1
+    # Use max existing ID + 1 to avoid collisions after deletions
+    server_id = (max(s["id"] for s in _servers) + 1) if _servers else 1
 
     _servers.append({
         "id": server_id,
@@ -668,6 +738,7 @@ async def cmd_addserver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "active": True,
         "created_at": now_ts(),
     })
+    _save_state()
     await update.message.reply_markdown(
         f"✅ *تمت إضافة السيرفر*\n\n"
         f"ID: `{server_id}`\n"
@@ -808,6 +879,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/addserver <اسم> <uri> [أيام] — إضافة سيرفر يدوياً\n"
         "/removeserver <id> — حذف سيرفر بالـ ID\n"
         "/deleteserver [id] — حذف سيرفر بقائمة تفاعلية\n"
+        "/toggleserver [id] — تفعيل/إيقاف سيرفر بدون حذفه\n"
         "/listservers — قائمة السيرفرات\n"
         "/genconfig — توليد كونفيغ مشفر\n"
         "/status — فحص الخادم\n\n"
@@ -980,6 +1052,7 @@ async def handle_boykta_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         "created_at": now_ts(),
         "locked":     locked,
     })
+    _save_state()
 
     # Inline button to delete this server immediately
     keyboard = InlineKeyboardMarkup([[
@@ -1035,8 +1108,70 @@ def _do_delete_server(sid: int) -> bool:
     """Remove server by id from _servers. Returns True if found."""
     before = len(_servers)
     _servers[:] = [s for s in _servers if s["id"] != sid]
-    return len(_servers) < before
+    found = len(_servers) < before
+    if found:
+        _save_state()
+    return found
 
+
+# ── /toggleserver — Enable or disable a server without deleting it ────────────
+
+@dev_only
+async def cmd_toggleserver(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Toggle a server's active state. Usage: /toggleserver <id>"""
+    if not ctx.args:
+        if not _servers:
+            await update.message.reply_text("لا توجد سيرفرات.")
+            return
+        lines = []
+        for s in _servers:
+            status = "✅" if s.get("active") else "⏸"
+            exp = s.get("expires_at", "?")[:10]
+            expired = " ⚠️ منتهي" if _is_expired(s) else ""
+            lines.append(f"{status} [{s['id']}] *{s['name']}* — {exp}{expired}")
+        await update.message.reply_markdown(
+            "⏯ *السيرفرات — الحالة:*\n\n" + "\n".join(lines) +
+            "\n\nالاستخدام: `/toggleserver <id>`"
+        )
+        return
+    try:
+        sid = int(ctx.args[0])
+    except ValueError:
+        await update.message.reply_text("ID يجب أن يكون رقماً.")
+        return
+    server = next((s for s in _servers if s["id"] == sid), None)
+    if server is None:
+        await update.message.reply_text(f"❌ لم يُوجَد سيرفر بالـ ID {sid}.")
+        return
+    server["active"] = not server.get("active", True)
+    _save_state()
+    state_emoji = "✅ مفعّل" if server["active"] else "⏸ موقوف"
+    await update.message.reply_markdown(
+        f"⏯ *تم تغيير حالة السيرفر*\n\n"
+        f"ID: `{sid}`\n"
+        f"الاسم: *{server['name']}*\n"
+        f"الحالة الجديدة: {state_emoji}"
+    )
+
+# ── Auto-expiry background task ───────────────────────────────────────────────
+
+async def _auto_expire_task() -> None:
+    """
+    Background task that runs every hour and:
+      1. Deactivates expired servers (sets active=False)
+      2. Logs what expired for the developer
+    Servers are NOT deleted — the developer can review and remove them manually.
+    """
+    while True:
+        await asyncio.sleep(3600)   # check every hour
+        expired_names = []
+        for server in _servers:
+            if server.get("active", True) and _is_expired(server):
+                server["active"] = False
+                expired_names.append(f"[{server['id']}] {server['name']}")
+        if expired_names:
+            _save_state()
+            log.info(f"Auto-expired {len(expired_names)} server(s): {', '.join(expired_names)}")
 
 # ── /cancel ────────────────────────────────────────────────────────────────────
 
@@ -1049,11 +1184,13 @@ async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_subscribe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     _subscribers.add(uid)
+    _save_state()
     await update.message.reply_text("✅ تم اشتراكك في إعلانات Boykta VPN.")
 
 async def cmd_unsubscribe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     _subscribers.discard(uid)
+    _save_state()
     await update.message.reply_text("✅ تم إلغاء اشتراكك.")
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -1063,8 +1200,20 @@ async def cmd_unsubscribe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def _api_health(request):
     return aio_web.json_response({"status": "ok", "ts": now_ts()})
 
+def _is_expired(server: dict) -> bool:
+    """Return True if the server's expires_at is in the past."""
+    try:
+        exp = server.get("expires_at", "")
+        if not exp:
+            return False
+        dt = datetime.strptime(exp, "%Y-%m-%dT%H:%M:%S.000Z")
+        return datetime.utcnow() > dt
+    except Exception:
+        return False
+
 async def _api_get_servers(request):
-    active = [s for s in _servers if s.get("active", True)]
+    # Return only active, non-expired servers
+    active = [s for s in _servers if s.get("active", True) and not _is_expired(s)]
     return aio_web.json_response({"servers": active})
 
 async def _api_get_announcements(request):
@@ -1072,7 +1221,7 @@ async def _api_get_announcements(request):
     ads = []
     for ad in _announcement_queue:
         media_urls = [
-            f"https://boykta.boykta.dpdns.org/api/media/{fid}"
+            f"{PUBLIC_BASE_URL}/api/media/{fid}"
             for fid in ad.get("file_ids", [])
         ]
         ads.append({
@@ -1099,6 +1248,7 @@ async def _api_post_announcements(request):
                 "caption": data.get("message", ""),
                 "created_at": now_ts(),
             })
+            _save_state()
         return aio_web.json_response({"ok": True})
     except Exception as exc:
         log.warning(f"POST /api/announcements error: {exc}")
@@ -1143,7 +1293,7 @@ async def _api_announcements_active(request):
         return aio_web.json_response({"announcement": None})
 
     media_urls = [
-        f"https://boykta.boykta.dpdns.org/api/media/{fid}"
+        f"{PUBLIC_BASE_URL}/api/media/{fid}"
         for fid in ad.get("file_ids", [])
     ]
     return aio_web.json_response({
@@ -1215,6 +1365,7 @@ async def _run_http_server():
 
 def main():
     log.info("Starting Boykta VPN Telegram Bot...")
+    _load_state()   # restore persisted state before accepting any updates
     app = Application.builder().token(BOT_TOKEN).build()
 
     # Commands
@@ -1230,6 +1381,7 @@ def main():
     app.add_handler(CommandHandler("removeserver",  cmd_removeserver))
     app.add_handler(CommandHandler("deleteserver",  cmd_deleteserver))
     app.add_handler(CommandHandler("listservers",   cmd_listservers))
+    app.add_handler(CommandHandler("toggleserver",  cmd_toggleserver))
     app.add_handler(CommandHandler("genconfig",     cmd_genconfig))
     app.add_handler(CommandHandler("status",        cmd_status))
     app.add_handler(CommandHandler("subscribe",     cmd_subscribe))
@@ -1267,6 +1419,8 @@ def main():
     async def run_all():
         # Start HTTP API server (non-blocking)
         http_task = asyncio.create_task(_run_http_server())
+        # Auto-expire task — deactivates expired servers every hour
+        expire_task = asyncio.create_task(_auto_expire_task())
 
         # Run Telegram polling (blocks until stopped)
         async with app:
@@ -1278,6 +1432,7 @@ def main():
             await app.stop()
 
         http_task.cancel()
+        expire_task.cancel()
 
     asyncio.run(run_all())
 

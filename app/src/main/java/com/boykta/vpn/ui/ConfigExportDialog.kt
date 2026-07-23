@@ -19,6 +19,7 @@ import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Admin-mode bottom sheet: create and export a .boykta config file.
@@ -103,17 +104,23 @@ class ConfigExportDialog : BottomSheetDialogFragment() {
                 etExpiry, etCustomToast, etSsMethod, protocols, spinnerProtocol,
                 spinnerDurUnit, switchLocked, view
             )?.let { config ->
-                val file = BoykConfigManager.export(requireContext(), config)
-                if (file != null) {
-                    val lockTag = if (config.locked) "مغلق" else "مكشوف"
-                    Toast.makeText(
-                        requireContext(),
-                        "تم الحفظ ($lockTag): ${file.name}\nفي مجلد Downloads",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    dismiss()
-                } else {
-                    showError(view, "فشل التصدير — تحقق من أذونات التخزين")
+                // Run file I/O on IO dispatcher — prevents ANR on slow storage
+                CoroutineScope(Dispatchers.IO).launch {
+                    val file = BoykConfigManager.export(requireContext(), config)
+                    withContext(Dispatchers.Main) {
+                        if (!isAdded) return@withContext
+                        if (file != null) {
+                            val lockTag = if (config.locked) "مغلق" else "مكشوف"
+                            Toast.makeText(
+                                requireContext(),
+                                "تم الحفظ ($lockTag): ${file.name}\nفي مجلد Downloads",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            dismiss()
+                        } else {
+                            showError(view, "فشل التصدير — تحقق من أذونات التخزين")
+                        }
+                    }
                 }
             }
         }
