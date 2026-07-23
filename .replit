@@ -31,7 +31,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "/home/runner/workspace/.venv/bin/python bot.py"
+args = "python3 bot.py"
 
 [[workflows.workflow]]
 name = "Cloudflare Tunnel"
@@ -47,3 +47,8 @@ args = "/home/runner/workspace/cloudflared tunnel run --token $CLOUDFLARE_TOKEN"
 [[ports]]
 localPort = 25227
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+DEVELOPER_ID = "7401831506"

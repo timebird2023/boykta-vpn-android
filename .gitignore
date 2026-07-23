@@ -8,3 +8,5 @@ local.properties
 *.iml
 .idea/
 .DS_Store
+boykta_state.json
+boykta_bot.log

@@ -92,6 +92,10 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("BoyktaBot")
+# HTTP client request URLs contain the Telegram bot token. Keep those URLs out
+# of workflow and file logs while retaining warnings and errors.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # ── Persistent state — JSON file ─────────────────────────────────────────────
 # All state is saved to DATA_FILE so it survives bot restarts.
