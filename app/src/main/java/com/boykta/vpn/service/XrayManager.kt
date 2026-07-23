@@ -1,6 +1,7 @@
 package com.boykta.vpn.service
 
 import android.util.Log
+import com.boykta.vpn.util.DnsPreference
 import libXray.LibXray
 import org.json.JSONArray
 import org.json.JSONObject
@@ -33,13 +34,19 @@ object XrayManager {
     /**
      * Start Xray-core with the given proxy URI.
      * Always calls forceStop() first to prevent stale-instance port conflicts.
+     * @param dnsChoice Optional user DNS preference (DoH, family-safe blocking).
      */
-    fun start(proxyUri: String, socksPort: Int, httpPort: Int): Boolean {
+    fun start(
+        proxyUri: String,
+        socksPort: Int,
+        httpPort: Int,
+        dnsChoice: DnsPreference.DnsChoice = DnsPreference.DnsChoice.CLOUDFLARE
+    ): Boolean {
         forceStop()   // belt-and-suspenders — BoykVpnService also waits for port free
 
         return try {
             VpnLogManager.sys("Building Xray config…  protocol=${proxyUri.substringBefore("://")}")
-            val cfg = buildXrayConfig(proxyUri, socksPort, httpPort)
+            val cfg = buildXrayConfig(proxyUri, socksPort, httpPort, dnsChoice)
 
             val req = JSONObject().apply {
                 put("apiVersion", API_VERSION)
@@ -111,10 +118,30 @@ object XrayManager {
     // ── Config builder ─────────────────────────────────────────────────────────
 
     /**
-     * Builds a minimal Xray JSON config.
-     * No geosite/geoip files required — all traffic routes directly to proxy.
+     * Builds a full Xray JSON config.
+     *
+     * No geosite/geoip .dat files required — all traffic routes directly to proxy.
+     * DNS choice controls:
+     *  • Which DNS servers Xray uses internally (for domain→IP resolution in routing)
+     *  • Whether DoH (DNS-over-HTTPS) is configured for privacy
+     *  • Whether family-safe blocking rules are added (CleanBrowsing / CF Families)
+     *
+     * Chrome compatibility notes:
+     *  • Sniffing destOverride includes "http", "tls", "quic" — Xray reads the real
+     *    domain from SNI so routing is domain-aware even for raw IP connections.
+     *  • routeOnly: true → sniffed domain is used ONLY for routing decisions;
+     *    the outbound still connects to the original IP. This prevents Xray from
+     *    re-resolving Chrome's connections (which can cause latency spikes and
+     *    "connection reset" errors in Chrome's HTTPS stack).
+     *  • queryStrategy: "UseIPv4" in DNS — avoids IPv6 routing confusion on
+     *    networks where IPv6 DNS works but IPv6 routing is broken.
      */
-    private fun buildXrayConfig(proxyUri: String, socksPort: Int, httpPort: Int): String {
+    private fun buildXrayConfig(
+        proxyUri: String,
+        socksPort: Int,
+        httpPort: Int,
+        dnsChoice: DnsPreference.DnsChoice = DnsPreference.DnsChoice.CLOUDFLARE
+    ): String {
         val outbound = when {
             proxyUri.startsWith("vless://")  -> buildVlessOutbound(proxyUri)
             proxyUri.startsWith("trojan://") -> buildTrojanOutbound(proxyUri)
@@ -127,20 +154,41 @@ object XrayManager {
             // Suppress Xray internal logs entirely — saves CPU for routing
             put("log", JSONObject().apply { put("loglevel", "none") })
 
-            // DNS — used by Xray for internal domain lookups (e.g. when domainStrategy
-            // resolves a domain to match IP routing rules). TunBridge handles actual
-            // device DNS queries via protected sockets, so these servers are Xray-internal.
+            // DNS — used by Xray for internal domain lookups only (routing / IPIfNonMatch).
+            // TunBridge forwards device DNS (UDP/53) via protected sockets — these are
+            // Xray-internal DNS servers, NOT visible to the device apps.
+            //
+            // queryStrategy: UseIPv4 — avoids broken IPv6 paths on Cloudflare-fronted
+            // servers where AAAA records exist but IPv6 routing is unreliable.
             put("dns", JSONObject().apply {
-                put("servers", JSONArray().apply {
-                    put("1.1.1.1")   // Cloudflare — fastest
-                    put("8.8.8.8")   // Google — fallback
-                    put("localhost")
-                })
+                put("queryStrategy", "UseIPv4")
+                val servers = JSONArray()
+                // DoH server goes first when available — used for ALL queries, no domain
+                // restriction. The `domains` field in Xray DNS config restricts which
+                // queries go to that server; omitting it means it handles everything.
+                // Plain IP fallbacks below catch cases where DoH itself is unreachable.
+                dnsChoice.dohUrl?.let { doh ->
+                    servers.put(JSONObject().apply {
+                        put("address", doh)
+                        // No "domains" key — this server is consulted for every query
+                        put("skipFallback", false)
+                    })
+                }
+                // Plain-UDP fallback servers (used if DoH server is unreachable)
+                for (server in dnsChoice.servers) { servers.put(server) }
+                // Always include a reliable final fallback
+                if (dnsChoice.servers.none { it == "1.1.1.1" }) servers.put("1.1.1.1")
+                servers.put("localhost")
+                put("servers", servers)
             })
 
             put("inbounds", JSONArray().apply {
-                // SOCKS5 inbound — sniff HTTP Host header, TLS SNI, and QUIC SNI so
-                // Xray can log and route by real domain name instead of raw IP.
+                // SOCKS5 inbound.
+                // routeOnly: true → sniffed domain is used for routing ONLY;
+                // Xray still connects to the original IP. This is critical for Chrome:
+                // without routeOnly, Xray re-resolves the domain for the outbound
+                // connection, causing a second DNS round-trip and possible connection
+                // resets if the re-resolved IP differs from what Chrome expected.
                 put(JSONObject().apply {
                     put("tag", "socks-in")
                     put("port", socksPort)
@@ -156,7 +204,9 @@ object XrayManager {
                         put("destOverride", JSONArray().apply {
                             put("http"); put("tls"); put("quic")
                         })
-                        put("routeOnly", false)
+                        // KEY FIX for Chrome: route by domain name, but keep the
+                        // outbound destination as the original IP to avoid re-resolution.
+                        put("routeOnly", true)
                     })
                 })
                 // HTTP proxy inbound (for direct app config use)
@@ -169,6 +219,7 @@ object XrayManager {
                     put("sniffing", JSONObject().apply {
                         put("enabled", true)
                         put("destOverride", JSONArray().apply { put("http"); put("tls") })
+                        put("routeOnly", true)
                     })
                 })
             })
@@ -178,7 +229,10 @@ object XrayManager {
                 put(JSONObject().apply {
                     put("tag", "direct")
                     put("protocol", "freedom")
-                    put("settings", JSONObject())
+                    put("settings", JSONObject().apply {
+                        // Prefer IPv4 for direct connections — consistent with queryStrategy
+                        put("domainStrategy", "UseIPv4")
+                    })
                 })
                 put(JSONObject().apply {
                     put("tag", "block")
@@ -188,13 +242,28 @@ object XrayManager {
             })
 
             // Routing — no geosite/geoip .dat files required.
-            // IPIfNonMatch: Xray resolves a domain to IP only when no domain-based rule matched.
-            // This is faster than AsIs (which can't match domain→IP rules) and avoids the
-            // extra DNS round-trip of UseIP (which resolves everything).
-            // Result: lower first-packet latency for gaming and streaming.
+            // IPIfNonMatch: Xray resolves a domain to IP only when no domain rule matched.
             put("routing", JSONObject().apply {
                 put("domainStrategy", "IPIfNonMatch")
                 put("rules", JSONArray().apply {
+                    // Family-safe blocking — block known adult content categories by domain
+                    // when user selects a family-safe DNS. This is a belt-and-suspenders
+                    // measure alongside the DNS-level blocking.
+                    if (dnsChoice.blockAdult) {
+                        put(JSONObject().apply {
+                            put("type", "field")
+                            // Common adult content domain keywords — Xray drops at routing layer
+                            put("domain", JSONArray().apply {
+                                put("keyword:porn"); put("keyword:xxx"); put("keyword:sex")
+                                put("keyword:adult"); put("keyword:nude"); put("keyword:nsfw")
+                                put("keyword:xvideo"); put("keyword:xhamster")
+                                put("keyword:xnxx"); put("keyword:pornhub"); put("keyword:redtube")
+                                put("keyword:youporn"); put("keyword:tube8")
+                            })
+                            put("outboundTag", "block")
+                        })
+                    }
+
                     // Local/private IP ranges → direct (never proxy RFC-1918 or loopback)
                     put(JSONObject().apply {
                         put("type", "field")
@@ -205,8 +274,8 @@ object XrayManager {
                         })
                         put("outboundTag", "direct")
                     })
+
                     // All other TCP and UDP → proxy
-                    // UDP through SOCKS5 uses Xray's UDP associate for game traffic
                     put(JSONObject().apply {
                         put("type", "field")
                         put("network", "tcp,udp")

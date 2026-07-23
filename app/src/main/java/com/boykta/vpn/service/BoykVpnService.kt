@@ -157,14 +157,16 @@ class BoykVpnService : VpnService() {
                 // ── STEP 3: Local IP identification ───────────────────────────
                 logLocalIp()
 
-                // ── STEP 4: Stop stale Xray + wait for port free ──────────────
+                // ── STEP 4: Load user preferences + stop stale Xray ──────────
+                // Load DNS choice BEFORE starting Xray so it can configure DoH + routing
+                val dnsChoice = DnsPreference.load(this@BoykVpnService)
                 XrayManager.forceStop()
                 val portFree = waitForPort(LOCAL_SOCKS_PORT, timeoutMs = 3_000)
                 if (!portFree) VpnLogManager.warn("Port $LOCAL_SOCKS_PORT still in use — proceeding")
 
                 // ── STEP 4b: Start Xray-core ──────────────────────────────────
                 VpnLogManager.sys("Connecting to v2ray server...")
-                val xrayOk = XrayManager.start(server.config, LOCAL_SOCKS_PORT, LOCAL_HTTP_PORT)
+                val xrayOk = XrayManager.start(server.config, LOCAL_SOCKS_PORT, LOCAL_HTTP_PORT, dnsChoice)
                 if (!xrayOk) {
                     notifyError("فشل تشغيل محرك VPN")
                     VpnLogManager.error("Xray engine failed to start — aborting")
@@ -180,7 +182,6 @@ class BoykVpnService : VpnService() {
                 }
 
                 // ── STEP 5: Establish TUN interface ───────────────────────────
-                val dnsChoice = DnsPreference.load(this@BoykVpnService)
                 val bypassedApps = SplitTunnelManager.getBypassed(this@BoykVpnService)
                 VpnLogManager.sys("DNS: ${dnsChoice.label}  — Split-tunnel: ${bypassedApps.size} apps bypassed")
 

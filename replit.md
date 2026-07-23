@@ -97,7 +97,55 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 - **libXray.aar**: NOT present — VPN engine starts Xray inbounds but TUN→SOCKS5 bridge requires the .aar for native routing. Place in `app/libs/` to enable full device-wide VPN.
 - **SDK License fix**: If Gradle complains about licenses, manually write all hashes to `~/android-sdk/licenses/android-sdk-license` (see memory file `android-build-setup.md`).
 
-## Latest Changes (July 23 2026)
+## Latest Changes (July 23 2026) — Audit & Hardening Pass 2
+
+### ملخص التغييرات (Audit & Hardening Pass 2)
+
+#### TunBridge.kt — إصلاحات Chrome + تحسينات السرعة
+- ✅ **حجب HTTP/3 (UDP/80)** — إضافة حجب UDP منفذ 80 إلى جانب منفذ 443. Chrome وFirefox يستخدمان UDP/80 كاختبار HTTP/3. الحجب يجعل المتصفحات ترجع إلى TCP/TLS فورياً
+- ✅ **زيادة buffer الـ UDP من 2048 إلى 4096** — يحل مشكلة اقتطاع ردود DNS الكبيرة (DNSSEC/IPv6 records) التي كانت تسبب فشل التحليل في Chrome
+- ✅ **زيادة مهلة الاتصال من 8s إلى 15s** — يحل مشكلة "Connection timed out" عند بطء Cloudflare edge
+- ✅ **زيادة مهلة stall من 120s إلى 180s** — حماية WebSocket / long-poll / SSE connections من الإغلاق المبكر
+
+#### XrayManager.kt — إصلاح Chrome + DNS
+- ✅ **`routeOnly: true` في sniffing** — الإصلاح الرئيسي لـ Chrome: Xray يستخدم النطاق المستشَم للتوجيه فقط، لكنه يتصل بالـ IP الأصلي. بدونه، Xray يُعيد تحليل النطاق وينشئ اتصالاً ثانياً يختلف IP عن توقع Chrome مما يسبب رفض TLS
+- ✅ **`queryStrategy: "UseIPv4"` في DNS** — يمنع مشكلة توجيه IPv6 المكسور على بعض الشبكات
+- ✅ **دعم DoH (DNS-over-HTTPS)** — عند اختيار Cloudflare أو Family DNS، يُكوَّن Xray لاستخدام DoH للاستعلامات الداخلية
+- ✅ **حجب المحتوى الإباحي في routing** — عند اختيار Family DNS، يُضاف قاعدة routing تحجب نطاقات البالغين في طبقة Xray (belt-and-suspenders مع DNS-level blocking)
+- ✅ **`domainStrategy: "UseIPv4"` للـ direct outbound** — اتساق مع queryStrategy لمنع اتصالات IPv6 المكسورة
+
+#### DnsPreference.kt — حجب المحتوى الإباحي
+- ✅ **CleanBrowsing Family (185.228.168.168)** — DNS متخصص لحجب المحتوى الإباحي، مع DoH
+- ✅ **Cloudflare for Families (1.1.1.3)** — يحجب الإباحية + البرمجيات الخبيثة + DoH
+- ✅ **OpenDNS FamilyShield (208.67.222.123)** — خيار ثالث موثوق
+- ✅ **حقل `blockAdult`** — عند اختياره، يُمرَّر إلى XrayManager لإضافة keyword routing rules
+
+#### SecurityChecker.kt — كشف الـ Sniffers
+- ✅ **إضافة 14 تطبيق اختراق جديد** — PCAPdroid، HTTP Toolkit، Reqable، تطبيقات SSL Kill Switch، Frida/objection
+
+#### CryptoHelper.kt — تشفير أقوى للـ Config
+- ✅ **تنسيق v2 (HKDF subkeys)** — كل config مشفر بمفتاح مختلف مشتق من master key + 16-byte random salt عبر HKDF-SHA256. حتى لو كان المحتوى متطابقاً، الـ ciphertext مختلف تماماً
+- ✅ **version byte 0xB2** — التمييز التلقائي بين v1 (legacy) وv2 عند فك التشفير — متوافق مع الملفات القديمة
+- ✅ **backward compatible** — الملفات القديمة (v1) تُفك بالطريقة القديمة، الجديدة بـ HKDF
+
+#### bot.py — مزامنة التشفير
+- ✅ **دعم v2 في `encrypt_boykta`** — يُنتج ملفات .boykta بتنسيق v2 (HKDF)
+- ✅ **دعم v1+v2 في `decrypt_boykta`** — يُميز التلقائي بين التنسيقين
+- ✅ **إضافة `aiohttp` للـ requirements.txt** — كان مفقوداً وكان يمنع تشغيل Bot
+- ✅ **إنشاء Python venv** — `.venv/` جاهز للتشغيل
+
+#### لتشغيل البوت على Replit
+اضبط هذه الـ Secrets في إعدادات Replit:
+| المتغير | الوصف |
+|---------|-------|
+| `BOT_TOKEN` | توكن البوت من @BotFather |
+| `DEVELOPER_ID` | رقم حسابك على تيليغرام |
+| `CF_TOKEN` | توكن Cloudflare (يُستخدم في bot.py للتحقق من حالة النفق) |
+| `CLOUDFLARE_TOKEN` | توكن النفق لـ `cloudflared tunnel run` |
+
+---
+
+## Previous Changes (July 23 2026)
 
 ### Full VPN Audit + Performance & Chrome Fix
 

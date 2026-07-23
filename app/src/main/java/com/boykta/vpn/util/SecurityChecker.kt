@@ -11,22 +11,38 @@ object SecurityChecker {
 
     /** Known packet sniffer / proxy app package names */
     private val KNOWN_SNIFFERS = listOf(
+        // HTTP debuggers / MITM proxies
         "com.httpdebugger.lite",
         "com.requestable.app",
-        "com.packet.capture",
-        "com.minhui.networkcapture",
-        "com.minhui.networkcapture.pro",
-        "cn.trinea.android.countdowntimer",
-        "com.hzy.packet.capture",
-        "app.reqable.app",
-        "com.reqable.android",
         "com.charlesproxy.charles",
         "com.fiddler.android",
         "com.proxyman.NSProxy",
         "com.burpsuite.android",
+        // Packet capture tools
+        "com.packet.capture",
+        "com.minhui.networkcapture",
+        "com.minhui.networkcapture.pro",
+        "com.hzy.packet.capture",
+        "com.hzy.pcap",
+        // PCAPdroid — open-source traffic capture
+        "com.emanuelef.remote_capture",
+        "com.emanuelef.remote_capture.debug",
+        // Reqable — API testing + traffic capture
+        "app.reqable.app",
+        "com.reqable.android",
+        // Network tools that can intercept
         "io.github.rockyzhang24.shadowsocksx",
         "org.sandroproxy.drony",
         "com.networktools.netmaster",
+        "com.inkwired.droidinfo",
+        "com.overlook.android.fing",
+        // SSL Kill Switch / certificate bypass apps
+        "com.htbridge.hackapp",
+        "org.thoughtcrime.ssl.pinning",
+        // HTTP Toolkit — advanced MITM proxy
+        "tech.httptoolkit.android",
+        // Frida / dynamic instrumentation indicators
+        "com.sensepost.objection",
     )
 
     /**

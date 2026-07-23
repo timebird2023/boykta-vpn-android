@@ -195,15 +195,43 @@ def expires_ts(days: int) -> str:
     dt = datetime.utcnow() + timedelta(days=days)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
+def _hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
+    """HKDF-Expand using HMAC-SHA256 (RFC 5869). Used for per-config subkey derivation."""
+    import hmac as _hmac
+    out = b""; t = b""; counter = 1
+    while len(out) < length:
+        h = _hmac.new(prk, t + info + bytes([counter]), "sha256")
+        t = h.digest(); out += t; counter += 1
+    return out[:length]
+
+
+def _derive_subkey(master_key: bytes, salt: bytes) -> bytes:
+    """Derive a per-config AES-256 subkey via HKDF (matches Android CryptoHelper v2)."""
+    info = b"boykta-v2-config"
+    return _hkdf_expand(master_key + salt, info, 32)
+
+
+# Version marker — must match CryptoHelper.kt V2_MARKER = 0xB2
+_V2_MARKER = 0xB2
+
+
 def encrypt_boykta(payload_json: str) -> str:
-    """AES-256-GCM encryption matching Android CryptoHelper."""
+    """
+    AES-256-GCM encryption matching Android CryptoHelper v2.
+
+    v2 wire format: Base64(0xB2 || Salt[16] || IV[12] || ciphertext+tag)
+    — Salt is random per encryption, used to derive a config-specific subkey via HKDF.
+    — Even identical plaintexts produce completely different ciphertexts.
+    — Android CryptoHelper.kt auto-detects v1 vs v2 via the version byte.
+    """
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        iv = secrets.token_bytes(12)
-        aesgcm = AESGCM(CRYPTO_KEY)
-        ciphertext = aesgcm.encrypt(iv, payload_json.encode(), None)
-        # Wire format: Base64(IV[12] || ciphertext+tag)
-        return base64.b64encode(iv + ciphertext).decode()
+        salt      = secrets.token_bytes(16)
+        iv        = secrets.token_bytes(12)
+        subkey    = _derive_subkey(CRYPTO_KEY, salt)
+        ciphertext = AESGCM(subkey).encrypt(iv, payload_json.encode(), None)
+        blob      = bytes([_V2_MARKER]) + salt + iv + ciphertext
+        return base64.b64encode(blob).decode()
     except ImportError:
         log.warning("cryptography package not installed — returning plain JSON")
         return base64.b64encode(payload_json.encode()).decode()
@@ -237,27 +265,51 @@ def build_boykta_config(
 def decrypt_boykta(data: bytes) -> dict | None:
     """
     Try to decrypt (AES-256-GCM) or parse (plain JSON) a .boykta file.
-    Returns the parsed dict on success, None on failure.
+    Supports both v1 (IV[12] + ciphertext) and v2 (0xB2 + Salt[16] + IV[12] + ciphertext).
+
+    Version detection note:
+      ~1/256 v1 blobs have a first IV byte of 0xB2 by chance. When v2 decryption
+      fails (wrong key derivation, bad auth tag), we explicitly fall back to v1
+      rather than giving up — this mirrors CryptoHelper.kt's tryDecryptV2/fallback logic.
     """
-    # 1. Try AES-GCM decrypt first
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         raw = base64.b64decode(data)
+
+        # v2 detection: first byte is 0xB2 and length sufficient for header
+        if len(raw) > 29 and raw[0] == _V2_MARKER:
+            try:
+                salt      = raw[1:17]
+                iv        = raw[17:29]
+                ct        = raw[29:]
+                subkey    = _derive_subkey(CRYPTO_KEY, salt)
+                plaintext = AESGCM(subkey).decrypt(iv, ct, None)
+                return json.loads(plaintext.decode())
+            except Exception:
+                # Not a real v2 blob (v1 whose first IV byte happened to be 0xB2).
+                # Fall through to v1 decryption below.
+                pass
+
+        # v1: IV[12] + ciphertext+tag
         if len(raw) > 12:
-            iv = raw[:12]
-            ct = raw[12:]
-            plaintext = AESGCM(CRYPTO_KEY).decrypt(iv, ct, None)
-            return json.loads(plaintext.decode())
+            try:
+                iv        = raw[:12]
+                ct        = raw[12:]
+                plaintext = AESGCM(CRYPTO_KEY).decrypt(iv, ct, None)
+                return json.loads(plaintext.decode())
+            except Exception:
+                pass
+
     except Exception:
         pass
 
-    # 2. Try plain JSON
+    # Plain JSON
     try:
         return json.loads(data.decode())
     except Exception:
         pass
 
-    # 3. Try base64-encoded plain JSON (unlocked via bot genconfig)
+    # Base64-encoded plain JSON (unlocked export)
     try:
         return json.loads(base64.b64decode(data).decode())
     except Exception:

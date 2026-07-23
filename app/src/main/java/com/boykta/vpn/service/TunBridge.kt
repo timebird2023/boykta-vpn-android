@@ -58,9 +58,12 @@ class TunBridge(
         // Block QUIC (UDP/443) so Chrome/browsers fall back to TCP/TLS
         private const val PORT_QUIC  = 443
 
-        // Stall detection: close idle connections after 120 s
-        private const val STALL_TIMEOUT_MS  = 120_000
-        private const val CONNECT_TIMEOUT_MS = 8_000
+        // Stall detection: close idle connections after 180 s
+        // (increased from 120 s — long-poll / SSE / gaming websockets can be idle longer)
+        private const val STALL_TIMEOUT_MS  = 180_000
+
+        // Connect timeout: 15 s — Cloudflare edge may be slow to ACK under load
+        private const val CONNECT_TIMEOUT_MS = 15_000
     }
 
     private val scope    = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -221,8 +224,9 @@ class TunBridge(
         if (pkt.size <= payloadOff) return
         val payload = pkt.copyOfRange(payloadOff, pkt.size)
 
-        // Block QUIC (UDP/443) — Chrome and other browsers fall back to TCP/TLS
-        if (dstPort == PORT_QUIC) return
+        // Block QUIC (UDP/443) AND HTTP/3 alt-svc probe (UDP/80) so Chrome, Firefox,
+        // and all HTTP/3 clients fall back to TCP/TLS immediately.
+        if (dstPort == PORT_QUIC || dstPort == 80) return
 
         forwardUdp4(srcIp, srcPort, dstIp, dstPort, payload)
     }
@@ -232,10 +236,12 @@ class TunBridge(
             try {
                 java.net.DatagramSocket().use { sock ->
                     vpnService.protect(sock)
-                    sock.soTimeout = 4_000
+                    sock.soTimeout = 5_000
                     val addr = java.net.InetAddress.getByAddress(dstIp)
                     sock.send(java.net.DatagramPacket(payload, payload.size, addr, dstPort))
-                    val resp = java.net.DatagramPacket(ByteArray(2048), 2048)
+                    // 4096 bytes — handles large DNS responses (DNSSEC, many records)
+                    // and other UDP payloads that exceed the old 2048-byte limit.
+                    val resp = java.net.DatagramPacket(ByteArray(4096), 4096)
                     try {
                         sock.receive(resp)
                         injectUdp4ToTun(dstIp, dstPort, srcIp, srcPort, resp.data.copyOfRange(0, resp.length))
@@ -256,8 +262,8 @@ class TunBridge(
         if (pkt.size <= payloadOff) return
         val payload = pkt.copyOfRange(payloadOff, pkt.size)
 
-        // Block QUIC on IPv6 too
-        if (dstPort == PORT_QUIC) return
+        // Block QUIC (UDP/443) AND HTTP/3 alt-svc probe (UDP/80) on IPv6 too
+        if (dstPort == PORT_QUIC || dstPort == 80) return
 
         forwardUdp6(srcIp, srcPort, dstIp, dstPort, payload)
     }
@@ -267,10 +273,11 @@ class TunBridge(
             try {
                 java.net.DatagramSocket().use { sock ->
                     vpnService.protect(sock)
-                    sock.soTimeout = 4_000
+                    sock.soTimeout = 5_000
                     val addr = java.net.Inet6Address.getByAddress(null, dstIp, 0)
                     sock.send(java.net.DatagramPacket(payload, payload.size, addr, dstPort))
-                    val resp = java.net.DatagramPacket(ByteArray(2048), 2048)
+                    // 4096 bytes — matches IPv4 upgrade for large DNS / UDP responses
+                    val resp = java.net.DatagramPacket(ByteArray(4096), 4096)
                     try {
                         sock.receive(resp)
                         injectUdp6ToTun(dstIp, dstPort, srcIp, srcPort, resp.data.copyOfRange(0, resp.length))
