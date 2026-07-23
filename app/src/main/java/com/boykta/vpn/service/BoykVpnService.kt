@@ -189,8 +189,14 @@ class BoykVpnService : VpnService() {
                     // MTU 1380 — leaves headroom for WS framing (~10B) + TLS record (~29B)
                     // over the Cloudflare edge, preventing IP fragmentation that kills throughput.
                     .setMtu(1380)
+                    // IPv4 TUN address + default route
                     .addAddress("10.88.0.1", 30)
                     .addRoute("0.0.0.0", 0)
+                    // IPv6 TUN address + default route — captures IPv6 traffic so it is proxied
+                    // through Xray instead of leaking or failing. TunBridge handles IPv6 TCP/UDP
+                    // and blocks QUIC (UDP/443) on both address families.
+                    .addAddress("fd00::1", 128)
+                    .addRoute("::", 0)
                     .addDisallowedApplication(packageName)   // always exclude self
 
                 // Apply user-selected DNS
@@ -211,7 +217,7 @@ class BoykVpnService : VpnService() {
                 isConnected.set(true)
                 reconnectCount.set(0)
 
-                VpnLogManager.success("TUN interface ready → 10.88.0.1/30  MTU 1500")
+                VpnLogManager.success("TUN interface ready → 10.88.0.1/30 + fd00::1/128  MTU 1380")
                 VpnLogManager.info("DNS: ${dnsChoice.servers.joinToString(" + ")}   Route 0.0.0.0/0")
                 TunnelPingChecker.logNetworkInterfaces()
 

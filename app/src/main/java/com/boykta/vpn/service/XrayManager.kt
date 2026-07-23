@@ -124,17 +124,25 @@ object XrayManager {
         }
 
         return JSONObject().apply {
-            put("log", JSONObject().apply { put("loglevel", "warning") })
+            // Suppress Xray internal logs entirely — saves CPU for routing
+            put("log", JSONObject().apply { put("loglevel", "none") })
 
+            // DNS — used by Xray for internal domain lookups (e.g. when domainStrategy
+            // resolves a domain to match IP routing rules). TunBridge handles actual
+            // device DNS queries via protected sockets, so these servers are Xray-internal.
             put("dns", JSONObject().apply {
                 put("servers", JSONArray().apply {
-                    put("8.8.8.8"); put("1.1.1.1"); put("localhost")
+                    put("1.1.1.1")   // Cloudflare — fastest
+                    put("8.8.8.8")   // Google — fallback
+                    put("localhost")
                 })
             })
 
             put("inbounds", JSONArray().apply {
-                // SOCKS5 inbound with TLS/HTTP sniffing for domain detection
+                // SOCKS5 inbound — sniff HTTP Host header, TLS SNI, and QUIC SNI so
+                // Xray can log and route by real domain name instead of raw IP.
                 put(JSONObject().apply {
+                    put("tag", "socks-in")
                     put("port", socksPort)
                     put("protocol", "socks")
                     put("listen", "127.0.0.1")
@@ -145,16 +153,23 @@ object XrayManager {
                     })
                     put("sniffing", JSONObject().apply {
                         put("enabled", true)
-                        put("destOverride", JSONArray().apply { put("http"); put("tls") })
+                        put("destOverride", JSONArray().apply {
+                            put("http"); put("tls"); put("quic")
+                        })
                         put("routeOnly", false)
                     })
                 })
-                // HTTP proxy inbound
+                // HTTP proxy inbound (for direct app config use)
                 put(JSONObject().apply {
+                    put("tag", "http-in")
                     put("port", httpPort)
                     put("protocol", "http")
                     put("listen", "127.0.0.1")
                     put("settings", JSONObject().apply { put("allowTransparent", false) })
+                    put("sniffing", JSONObject().apply {
+                        put("enabled", true)
+                        put("destOverride", JSONArray().apply { put("http"); put("tls") })
+                    })
                 })
             })
 
@@ -172,11 +187,15 @@ object XrayManager {
                 })
             })
 
-            // Simple routing — no .dat files, no geosite, no geoip
+            // Routing — no geosite/geoip .dat files required.
+            // IPIfNonMatch: Xray resolves a domain to IP only when no domain-based rule matched.
+            // This is faster than AsIs (which can't match domain→IP rules) and avoids the
+            // extra DNS round-trip of UseIP (which resolves everything).
+            // Result: lower first-packet latency for gaming and streaming.
             put("routing", JSONObject().apply {
-                put("domainStrategy", "AsIs")
+                put("domainStrategy", "IPIfNonMatch")
                 put("rules", JSONArray().apply {
-                    // Local/private IP ranges → direct (no proxy)
+                    // Local/private IP ranges → direct (never proxy RFC-1918 or loopback)
                     put(JSONObject().apply {
                         put("type", "field")
                         put("ip", JSONArray().apply {
@@ -186,7 +205,8 @@ object XrayManager {
                         })
                         put("outboundTag", "direct")
                     })
-                    // Everything else → proxy
+                    // All other TCP and UDP → proxy
+                    // UDP through SOCKS5 uses Xray's UDP associate for game traffic
                     put(JSONObject().apply {
                         put("type", "field")
                         put("network", "tcp,udp")

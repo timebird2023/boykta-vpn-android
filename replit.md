@@ -57,8 +57,8 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 
 | File | Role |
 |------|------|
-| `service/BoykVpnService.kt` | VPN lifecycle, TUN setup (MTU 1500, DNS 8.8.8.8/1.1.1.1, 0.0.0.0/0 route) |
-| `service/TunBridge.kt` | Pure-Java TUN→SOCKS5 packet relay (TCP + UDP) |
+| `service/BoykVpnService.kt` | VPN lifecycle, TUN setup (MTU 1380, IPv4+IPv6 dual-stack routes) |
+| `service/TunBridge.kt` | TUN→SOCKS5 relay — IPv4+IPv6 TCP/UDP, QUIC-blocked, 256KB buffers |
 | `service/XrayManager.kt` | Xray-core wrapper — VLESS, Trojan, VMess, Shadowsocks |
 | `service/VpnLogManager.kt` | SharedFlow log bus (replays 120 entries) |
 | `ui/LogAdapter.kt` | Terminal-style log RecyclerView adapter |
@@ -97,7 +97,21 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 - **libXray.aar**: NOT present — VPN engine starts Xray inbounds but TUN→SOCKS5 bridge requires the .aar for native routing. Place in `app/libs/` to enable full device-wide VPN.
 - **SDK License fix**: If Gradle complains about licenses, manually write all hashes to `~/android-sdk/licenses/android-sdk-license` (see memory file `android-build-setup.md`).
 
-## Latest Changes (July 2026)
+## Latest Changes (July 23 2026)
+
+### Full VPN Audit + Performance & Chrome Fix
+
+- ✅ **QUIC blocked (UDP/443)** — `TunBridge.kt` now drops all UDP port 443 packets on both IPv4 and IPv6. Chrome/browsers fall back to TCP/TLS immediately and route correctly through Xray. Root cause of "Chrome not working".
+- ✅ **Full IPv6 support** — `BoykVpnService.kt` adds `fd00::1/128` address and `::/0` route to the TUN. `TunBridge.kt` now parses IPv6 headers, relays IPv6 TCP via SOCKS5 CONNECT ATYP=0x04, and injects IPv6 TCP responses back with correct IPv6+TCP checksums. IPv6-only sites and dual-stack connections now work.
+- ✅ **Performance: larger socket buffers** — `TcpSession` send/receive buffers increased from 128 KB to 256 KB. Better for streaming and gaming burst traffic.
+- ✅ **Performance: larger TUN read buffer** — Increased from 1500 to 8192 bytes. Reduces syscall overhead when the kernel batches packets.
+- ✅ **Performance: TcpSession channel capacity** — Increased from 1024 to 2048 frames. Less backpressure on the device→proxy write path under load.
+- ✅ **Xray log level `none`** — Eliminates Xray internal log I/O; saves CPU that was wasted on log formatting under load.
+- ✅ **Xray routing `IPIfNonMatch`** — Replaces `AsIs`. Xray resolves domains to IP only when no domain-level rule matched, avoiding unnecessary DNS round-trips. Lower first-packet latency for games.
+- ✅ **Xray sniffing adds `quic`** — Xray now sniffs QUIC SNI in addition to HTTP Host and TLS SNI, enabling correct routing decisions even when QUIC packets reach the inbound.
+- ✅ **Inbound tags added** — SOCKS5 inbound tagged `socks-in`, HTTP inbound tagged `http-in` for clean routing rule targeting.
+
+## Previous Changes (July 2026)
 
 - ✅ **Branding**: All "BOYKTA NET" → "BOYKTA VPN" (activity_main.xml ×3, activity_splash.xml, dialog_privacy_policy.xml)
 - ✅ **False reconnect loop fix**: Added `networkChangeJob` tracking in `BoykVpnService.kt` — stale coroutines from old sessions are cancelled before reconnect completes, preventing double-reconnect loops
