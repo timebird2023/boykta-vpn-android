@@ -59,10 +59,14 @@ class BoykVpnService : VpnService() {
         const val LOCAL_SOCKS_PORT  = 10808
         const val LOCAL_HTTP_PORT   = 10809
 
-        // Keep-alive tuning — PING NEVER RECONNECTS; only crashes do.
+        // Keep-alive tuning
         private const val PING_INTERVAL_MS    = 8_000L
         private const val RECONNECT_BASE_MS   = 3_000L
         private const val RECONNECT_MAX_MS    = 30_000L
+
+        // After this many consecutive HTTP-ping failures the dead tunnel is fast-reconnected.
+        // 3 × 8 s = 24 s maximum dead-internet time before automatic recovery.
+        private const val PING_FAIL_RECONNECT_THRESHOLD = 3
 
         private const val XRAY_READY_TIMEOUT_MS = 10_000L
         private const val XRAY_READY_POLL_MS    = 300L
@@ -82,6 +86,8 @@ class BoykVpnService : VpnService() {
     private val isConnected    = AtomicBoolean(false)
     private val isReconnecting = AtomicBoolean(false)
     private val reconnectCount = AtomicInteger(0)
+    // Counts consecutive HTTP-ping failures; resets on success or fast-reconnect.
+    private val pingFailCount  = AtomicInteger(0)
     private val serviceScope   = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var keepAliveJob     : Job? = null
@@ -249,17 +255,20 @@ class BoykVpnService : VpnService() {
                 TrafficCounter.start(serviceScope)
 
                 // ── STEP 9: Start network change listener ─────────────────────
-                // IMPORTANT: NetworkMonitor is OBSERVE-ONLY while the VPN is active.
-                // A healthy running tunnel MUST NEVER be killed by network change events.
-                // Auto-reconnect is triggered exclusively by Xray crash detection in the
-                // keep-alive loop (Step 10 below). Physical network changes are logged only.
+                // On WiFi→LTE (or any physical-network switch), Xray's underlying
+                // TCP/WebSocket connection becomes invalid while the TUN interface
+                // stays up. Without action the user experiences a silent dead tunnel.
+                //
+                // Strategy: fast Xray-only restart (TUN stays up) on network change.
+                // The device sees no disconnect; Xray rebinds on the new interface.
+                // TunBridge continues running and drains its queues when Xray comes back.
                 networkMonitor?.stop()
                 networkMonitor = NetworkMonitor(
                     context = this@BoykVpnService,
                     onNetworkAvailable = {
-                        // Log the event — DO NOT reconnect. Tunnel remains active.
-                        if (isConnected.get()) {
-                            VpnLogManager.info("Physical network changed — tunnel remains active (no action taken)")
+                        if (isConnected.get() && !isReconnecting.get()) {
+                            VpnLogManager.info("Physical network changed — fast-reconnecting Xray (TUN stays up)…")
+                            restartXrayOnly("network change")
                         }
                     },
                     onNetworkLost = {
@@ -267,6 +276,7 @@ class BoykVpnService : VpnService() {
                     }
                 )
                 serviceScope.launch {
+                    // Delay registration: avoids spurious events during TUN setup.
                     delay(10_000)
                     if (isConnected.get() && !isReconnecting.get()) {
                         networkMonitor?.start()
@@ -274,42 +284,8 @@ class BoykVpnService : VpnService() {
                 }
 
                 // ── STEP 10: Keep-alive ping loop ─────────────────────────────
-                // NOTE: Ping failures NEVER kill the tunnel.
-                // Only Xray crash or Xray process stopping triggers reconnect.
-                keepAliveJob?.cancel()
-                keepAliveJob = serviceScope.launch {
-                    while (isConnected.get() && isActive) {
-                        delay(PING_INTERVAL_MS)
-                        if (!isConnected.get() || !isActive) break
-
-                        // TCP probe — is Xray even listening?
-                        val proxyAlive = TunnelPingChecker.isProxyAlive(LOCAL_SOCKS_PORT)
-                        if (!proxyAlive) {
-                            if (!isReconnecting.get()) {
-                                VpnLogManager.warn("Xray proxy not responding — crash detected")
-                                triggerAutoReconnect("Xray crash")
-                            }
-                            break
-                        }
-
-                        // Xray internal state check
-                        if (!XrayManager.isRunning()) {
-                            if (!isReconnecting.get()) {
-                                VpnLogManager.warn("Xray core stopped unexpectedly")
-                                triggerAutoReconnect("Xray stopped")
-                            }
-                            break
-                        }
-
-                        // Full tunnel ping — log result only, NEVER reconnect on failure
-                        val ok = TunnelPingChecker.pingAndLog(LOCAL_SOCKS_PORT)
-                        if (!ok) {
-                            VpnLogManager.warn("HTTP Ping Timeout — tunnel active, monitoring continues")
-                            // NO reconnect on ping failure — tunnel stays alive
-                        }
-                        // else: logged inside pingAndLog as "HTTP Ping 200 OK (xxxms)"
-                    }
-                }
+                pingFailCount.set(0)
+                startKeepAliveLoop()
 
             } catch (e: Exception) {
                 Log.e(TAG, "VPN startup failed", e)
@@ -397,7 +373,97 @@ class BoykVpnService : VpnService() {
         false
     }
 
-    // ── Auto-reconnect (only on Xray crash, NOT on ping failures) ─────────────
+    // ── Keep-alive loop (extracted so it can be restarted after fast reconnect) ─
+
+    private fun startKeepAliveLoop() {
+        keepAliveJob?.cancel()
+        keepAliveJob = serviceScope.launch {
+            while (isConnected.get() && isActive) {
+                delay(PING_INTERVAL_MS)
+                if (!isConnected.get() || !isActive) break
+
+                // TCP probe — is Xray even listening on the SOCKS5 port?
+                val proxyAlive = TunnelPingChecker.isProxyAlive(LOCAL_SOCKS_PORT)
+                if (!proxyAlive) {
+                    if (!isReconnecting.get()) {
+                        VpnLogManager.warn("Xray proxy not responding — crash detected")
+                        triggerAutoReconnect("Xray crash")
+                    }
+                    break
+                }
+
+                // Xray internal state check via libXray API
+                if (!XrayManager.isRunning()) {
+                    if (!isReconnecting.get()) {
+                        VpnLogManager.warn("Xray core stopped unexpectedly")
+                        triggerAutoReconnect("Xray stopped")
+                    }
+                    break
+                }
+
+                // Full HTTP-ping through the tunnel.
+                // Consecutive failures trigger a fast Xray-only restart instead
+                // of logging silently — prevents indefinite dead-tunnel sessions.
+                val ok = TunnelPingChecker.pingAndLog(LOCAL_SOCKS_PORT)
+                if (!ok) {
+                    val fails = pingFailCount.incrementAndGet()
+                    VpnLogManager.warn("HTTP Ping Timeout ($fails/$PING_FAIL_RECONNECT_THRESHOLD)")
+                    if (fails >= PING_FAIL_RECONNECT_THRESHOLD && !isReconnecting.get()) {
+                        VpnLogManager.warn("Dead tunnel detected — initiating fast reconnect")
+                        pingFailCount.set(0)
+                        restartXrayOnly("$fails consecutive ping failures")
+                        break
+                    }
+                } else {
+                    pingFailCount.set(0)
+                }
+            }
+        }
+    }
+
+    // ── Fast Xray-only restart — TUN interface stays up ───────────────────────
+    //
+    // Handles two cases:
+    //   1. Physical-network change (WiFi → LTE): Xray's underlying socket is
+    //      invalid; restart it on the new network without touching the TUN fd.
+    //   2. Dead tunnel: N consecutive ping failures despite Xray "running".
+    //
+    // Result: device apps experience a 2-5 s pause, NOT a full VPN disconnect.
+    // The TUN fd stays open so Android's network stack keeps routing through us.
+
+    private fun restartXrayOnly(reason: String) {
+        if (!isReconnecting.compareAndSet(false, true)) return
+        val server = currentServer ?: run { isReconnecting.set(false); return }
+
+        serviceScope.launch {
+            VpnLogManager.sys("⚡ Fast reconnect ($reason) — restarting Xray, TUN stays up")
+            VpnLogManager.isReconnecting.set(true)
+
+            keepAliveJob?.cancel(); keepAliveJob = null
+            XrayManager.forceStop()
+            val portFree = waitForPort(LOCAL_SOCKS_PORT, 3_000)
+            if (!portFree) VpnLogManager.warn("Port $LOCAL_SOCKS_PORT still in use — forcing start anyway")
+
+            val dnsChoice = DnsPreference.load(this@BoykVpnService)
+            val ok = XrayManager.start(server.config, LOCAL_SOCKS_PORT, LOCAL_HTTP_PORT, dnsChoice)
+            if (!ok) {
+                // Fall back to full reconnect — Xray failed to bind entirely
+                isReconnecting.set(false)
+                VpnLogManager.isReconnecting.set(false)
+                triggerAutoReconnect("Xray fast-restart failed")
+                return@launch
+            }
+
+            waitForXrayReady(LOCAL_SOCKS_PORT)
+            pingFailCount.set(0)
+            isReconnecting.set(false)
+            VpnLogManager.isReconnecting.set(false)
+            VpnLogManager.success("⚡ Fast reconnect complete — Xray rebounded on new network")
+            startKeepAliveLoop()
+        }
+    }
+
+    // ── Auto-reconnect (full teardown — used for Xray crash / fast-restart failure) ─
 
     private fun triggerAutoReconnect(reason: String) {
         if (!isReconnecting.compareAndSet(false, true)) return

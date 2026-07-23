@@ -176,9 +176,10 @@ object XrayManager {
                 }
                 // Plain-UDP fallback servers (used if DoH server is unreachable)
                 for (server in dnsChoice.servers) { servers.put(server) }
-                // Always include a reliable final fallback
+                // Reliable final fallback — do NOT use "localhost": that leaks queries
+                // to the system resolver and bypasses the tunnel's DNS protection.
                 if (dnsChoice.servers.none { it == "1.1.1.1" }) servers.put("1.1.1.1")
-                servers.put("localhost")
+                if (dnsChoice.servers.none { it == "8.8.8.8" }) servers.put("8.8.8.8")
                 put("servers", servers)
             })
 
@@ -289,7 +290,10 @@ object XrayManager {
     // ── VLESS outbound ────────────────────────────────────────────────────────
 
     private fun buildVlessOutbound(uri: String): JSONObject {
-        val p = parseVlessUri(uri)
+        val p = try { parseVlessUri(uri) } catch (e: Exception) {
+            VpnLogManager.error("VLESS URI parse failed: ${e.message?.take(80)} — using fallback")
+            return buildFallbackOutbound()
+        }
         return JSONObject().apply {
             put("tag", "proxy")
             put("protocol", "vless")
@@ -314,7 +318,14 @@ object XrayManager {
 
     // ── Trojan outbound ───────────────────────────────────────────────────────
 
-    private fun buildTrojanOutbound(uri: String): JSONObject {
+    private fun buildTrojanOutbound(uri: String): JSONObject = try {
+        buildTrojanOutboundImpl(uri)
+    } catch (e: Exception) {
+        VpnLogManager.error("Trojan URI parse failed: ${e.message?.take(80)} — using fallback")
+        buildFallbackOutbound()
+    }
+
+    private fun buildTrojanOutboundImpl(uri: String): JSONObject {
         val raw = uri.removePrefix("trojan://")
         val atIdx = raw.indexOf('@')
         val password = raw.substring(0, atIdx)
@@ -402,7 +413,14 @@ object XrayManager {
 
     // ── Shadowsocks outbound ──────────────────────────────────────────────────
 
-    private fun buildShadowsocksOutbound(uri: String): JSONObject {
+    private fun buildShadowsocksOutbound(uri: String): JSONObject = try {
+        buildShadowsocksOutboundImpl(uri)
+    } catch (e: Exception) {
+        VpnLogManager.error("Shadowsocks URI parse failed: ${e.message?.take(80)} — using fallback")
+        buildFallbackOutbound()
+    }
+
+    private fun buildShadowsocksOutboundImpl(uri: String): JSONObject {
         val raw = uri.removePrefix("ss://")
         val hashIdx = raw.indexOf('#')
         val main = if (hashIdx != -1) raw.substring(0, hashIdx) else raw

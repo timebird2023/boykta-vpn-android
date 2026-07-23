@@ -1,61 +1,58 @@
 ---
 name: Boykta VPN core stability
-description: Key fixes applied to stop SOCKS5 error spam, stale ping loops, rapid reconnects, and VPN self-disconnect loop — build verified clean.
+description: Key decisions, bugs found and fixed in BoykVpnService, TunBridge, XrayManager, TrafficCounter
 ---
 
-# Boykta VPN core stability fixes
+## Fast Xray-only restart on network change (WiFi→LTE)
 
-## CRITICAL: NetworkCallback MUST be observe-only while tunnel is active
-**Root cause (confirmed July 2026 via screenshot evidence):** Even with NET_CAPABILITY_NOT_VPN filtering and the 10s grace delay, a real physical network switch (e.g. cell→WiFi) fires onAvailable() and previously triggered `triggerAutoReconnect("network change")` — killing a perfectly healthy tunnel (5ms ping right before disconnect).
+**Rule:** When the physical network changes, call `restartXrayOnly()` — NOT `triggerAutoReconnect()`.  
+**Why:** Full reconnect tears down the TUN fd, giving the device a visible disconnect. Fast restart keeps TUN open; Xray rebinds on the new network. User sees a 2-5 s pause, not a disconnect.  
+**How to apply:** `BoykVpnService.restartXrayOnly(reason)` handles this. `NetworkMonitor.onNetworkAvailable` calls it. `triggerAutoReconnect` is only for Xray process crashes.
 
-**Fix:** The `onNetworkAvailable` callback in `BoykVpnService.startVpn()` now ONLY logs the event. It NEVER calls `triggerAutoReconnect`. Auto-reconnect is triggered exclusively by Xray crash detection in the keep-alive loop (proxy not responding / XrayManager.isRunning() == false).
+## Dead tunnel detection via consecutive ping failures
 
-**Rule:** A running VPN session must never be killed by network callback events. NetworkMonitor is observe-only while connected.
+**Rule:** After `PING_FAIL_RECONNECT_THRESHOLD` (3) consecutive HTTP-ping failures, call `restartXrayOnly()`.  
+**Why:** A tunnel can appear "running" (Xray port open, libXray reports running) but all traffic is silently dropped. Without this counter the user experiences indefinite dead internet.  
+**How to apply:** `pingFailCount` AtomicInteger in `BoykVpnService`; reset on success or on `restartXrayOnly` call.
 
-## THE BIG FIX: VPN self-disconnect loop
-**Root cause:** When the TUN interface comes up, Android fires `onAvailable()` for the VPN network itself. Without filtering, NetworkMonitor treated this as a "real network change" → triggered reconnect → infinite loop.
+## TCP data ordering — Channel.UNLIMITED
 
-**Fix (two layers):**
-1. `NetworkRequest` now includes `NET_CAPABILITY_NOT_VPN` — VPN networks are excluded from callbacks.
-2. Double-check inside `onAvailable()`: verify `caps.hasCapability(NET_CAPABILITY_NOT_VPN)` before forwarding.
-3. Post-connect grace period: NetworkMonitor start is delayed 10 s after TUN establishes (via `serviceScope.launch { delay(10_000) }`).
-4. Debounce raised from 4 s → 8 s.
+**Rule:** `TcpSession.toProxy` must use `Channel.UNLIMITED`, not a bounded capacity + fallback coroutine.  
+**Why:** The fallback-coroutine pattern (`scope.launch { toProxy.send(payload) }`) races with later `trySend` calls from the single `readLoop` coroutine, causing out-of-order TCP segments delivered to the proxy.  
+**How to apply:** `Channel.UNLIMITED` + single `trySend` in `onData`. Never add a fallback `launch { send() }` here.
 
-**Why:** Android's `ConnectivityManager` fires onAvailable for every network including the VPN tun0. Without `NET_CAPABILITY_NOT_VPN` in the request, every connection created an instant reconnect loop.
+## UDP timeout — SystemClock.elapsedRealtime()
 
-## WAKE_LOCK permission
-`android.permission.WAKE_LOCK` must be declared in AndroidManifest.xml. Without it, `PowerManager.newWakeLock().acquire()` throws a SecurityException on production devices (seen as `[WARN] WakeLock failed: Neither user ... nor current process has android.permission.WAKE_LOCK`).
+**Rule:** Use `SystemClock.elapsedRealtime()` (not `System.currentTimeMillis()`) for all stall-timeout comparisons in `UdpSession`.  
+**Why:** `currentTimeMillis` can jump forward/backward on NTP sync or timezone change, causing sessions to falsely expire or never expire.  
+**How to apply:** `lastActivityElapsed` field + `SystemClock.elapsedRealtime()` everywhere in `UdpSession`.
 
-## Log format change
-VpnLogManager emits structured prefixes — `[OK]`, `[WARN]`, `[ERR]`, `[SYS]`, `[INFO]`, `[DEV]` instead of emoji.
-LogAdapter colors by prefix string. Sentinel `__CLEAR__` triggers `clearAll()` in LogAdapter.
+## UDP session cap — MAX_UDP_SESSIONS = 512
 
-## clearLogs() added to VpnLogManager
-Clears throttle map and emits `__CLEAR__` sentinel which LogAdapter intercepts → `clearAll()` wipes all lines and inserts a visual separator.
+**Rule:** Evict the oldest `UdpSession` (via `udpSessions.entries.firstOrNull()`) when the map reaches 512 entries before inserting a new one.  
+**Why:** No cap → unbounded memory growth from UDP flood or buggy apps opening thousands of 5-tuples.  
+**How to apply:** Check in `forwardUdp()` inside the `synchronized(udpSessions)` block before constructing a new `UdpSession`.
 
-## SOCKS5 error spam during reconnect
-`VpnLogManager.isReconnecting: AtomicBoolean` set before teardown → suppresses SOCKS5 errors.
-`TunnelPingChecker` checks `isReconnecting.get()` at every log site.
+## DNS leak — remove "localhost" from Xray DNS
 
-## NetworkMonitor debounce
-AtomicLong CAS debounce now 8 s. Only fires for non-VPN networks.
+**Rule:** Never add `servers.put("localhost")` to the Xray DNS config.  
+**Why:** "localhost" resolves to the system resolver, which exits the tunnel and leaks DNS queries to the ISP.  
+**How to apply:** Use `1.1.1.1` and `8.8.8.8` as plain-UDP fallbacks after DoH and user-chosen servers.
 
-## TunBridge stall detection
-`socket.soTimeout = 60_000` → stalled sessions self-close.
+## URI parser safety — try/catch wrappers
 
-## Xray readiness check
-`waitForXrayReady()` polls `isProxyAlive()` for up to 8 s before TUN build.
+**Rule:** Wrap `buildVlessOutbound`, `buildTrojanOutbound`, `buildShadowsocksOutbound` in try/catch returning `buildFallbackOutbound()`.  
+**Why:** Malformed URIs (missing `@`, empty host, bad base64) cause `StringIndexOutOfBoundsException` that kills the entire Xray start sequence.  
+**How to apply:** Impl functions `buildTrojanOutboundImpl` / `buildShadowsocksOutboundImpl` hold the logic; public functions are thin try/catch wrappers.
 
-## Colors
-- Disconnected button: `#FF0055` (red) — `bg_connect_button.xml`
-- Connected button: `#00C8E0` with `#00F2FE` border — `bg_connect_button_disconnect.xml`
-- Shield icon in topbar tints: cyan (connected), amber (connecting), red (disconnected)
-- Ring alpha: 1.0 (connected), 0.5 (connecting), 0.35 (disconnected)
+## TrafficCounter — dynamic TUN interface detection
 
-## UI additions (second pass)
-- Removed fake "0 KB/s" traffic counters from top bar — replaced with tinting shield icon
-- Added Clear Logs (trash icon) button in terminal header
-- Added Share App drawer item (ic_share.xml)
-- Added Privacy Policy drawer item (ic_privacy.xml)
-- New launcher icon: dark `#050508` background + cyan shield with "B" letter
-- SplashActivity with fade+scale animation (2.2 s, then → MainActivity)
+**Rule:** Scan `/proc/net/dev` for any interface whose name starts with `"tun"` or `"vpn"` instead of matching a hardcoded list.  
+**Why:** Hardcoded list (`tun0`, `tun1`, `tun2`, `vpn0`) misses `tun10`, `tun3`, custom ROMs that use `vpntun`, etc., showing 0 KB/s permanently.  
+**How to apply:** `name.startsWith("tun") || name.startsWith("vpn")` after finding `:` in each line of `/proc/net/dev`.
+
+## soTimeout type: Long → Int cast
+
+**Rule:** `socket.soTimeout = STALL_TIMEOUT_MS.toInt()` — `Socket.soTimeout` property is `Int` in the JVM API.  
+**Why:** If `STALL_TIMEOUT_MS` is declared as `Long` (e.g. `180_000L`), Kotlin rejects the assignment without explicit cast.  
+**How to apply:** Always `.toInt()` when assigning to `socket.soTimeout`.

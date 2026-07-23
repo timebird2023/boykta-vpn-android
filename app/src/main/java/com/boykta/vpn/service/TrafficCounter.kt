@@ -35,7 +35,9 @@ object TrafficCounter {
     private var smoothTx = 0.0
 
     private const val ALPHA = 0.35   // EMA smoothing factor
-    private val TUN_NAMES = listOf("tun0", "tun1", "tun2", "vpn0")
+    // Dynamic detection: scan /proc/net/dev for any interface whose name starts
+    // with "tun" or "vpn". Handles tun0, tun10, vpn0, vpntun, etc. without
+    // a hardcoded list that misses interfaces assigned by different kernels/ROMs.
 
     fun start(scope: CoroutineScope) {
         stop()
@@ -80,21 +82,27 @@ object TrafficCounter {
         smoothTx = 0.0
     }
 
-    /** Read RX and TX bytes from /proc/net/dev for the VPN TUN interface. */
+    /** Read RX and TX bytes from /proc/net/dev for the VPN TUN interface.
+     *
+     * Scans dynamically instead of matching a fixed list — correctly handles
+     * tun0, tun1, tun10, vpn0, vpntun, and any name the kernel assigns.
+     */
     private fun readTunBytes(): Pair<Long, Long> {
         return try {
             val lines = File("/proc/net/dev").readLines()
             for (line in lines) {
                 val trimmed = line.trim()
-                val name = trimmed.substringBefore(":").trim()
-                if (name in TUN_NAMES) {
-                    val fields = trimmed.substringAfter(":").trim().split(Regex("\\s+"))
-                    // /proc/net/dev columns: rx_bytes, rx_packets, ... tx_bytes, tx_packets ...
-                    // Index 0 = rx_bytes, index 8 = tx_bytes
-                    val rx = fields.getOrNull(0)?.toLongOrNull() ?: 0L
-                    val tx = fields.getOrNull(8)?.toLongOrNull() ?: 0L
-                    return Pair(rx, tx)
-                }
+                val colonIdx = trimmed.indexOf(':')
+                if (colonIdx < 0) continue
+                val name = trimmed.substring(0, colonIdx).trim()
+                // Match any tun* or vpn* interface regardless of numeric suffix
+                if (!name.startsWith("tun") && !name.startsWith("vpn")) continue
+                val fields = trimmed.substring(colonIdx + 1).trim().split(Regex("\\s+"))
+                // /proc/net/dev columns after interface name:
+                // [0]=rx_bytes [1]=rx_packets ... [8]=tx_bytes [9]=tx_packets ...
+                val rx = fields.getOrNull(0)?.toLongOrNull() ?: 0L
+                val tx = fields.getOrNull(8)?.toLongOrNull() ?: 0L
+                return Pair(rx, tx)
             }
             Pair(0L, 0L)
         } catch (_: Exception) {

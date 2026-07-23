@@ -2,6 +2,7 @@ package com.boykta.vpn.service
 
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -71,10 +72,15 @@ class TunBridge(
 
         // Close idle TCP/UDP sessions after 180 s. Game sessions regularly use
         // long periods with no datagrams, so this is deliberately not aggressive.
-        private const val STALL_TIMEOUT_MS  = 180_000
+        // Uses SystemClock.elapsedRealtime() — immune to system-clock adjustments.
+        private const val STALL_TIMEOUT_MS  = 180_000L
 
         // Connect timeout: 15 s — Cloudflare edge may be slow to ACK under load
         private const val CONNECT_TIMEOUT_MS = 15_000
+
+        // Safety cap: prevent memory exhaustion from UDP session floods.
+        // Oldest session is evicted when the limit is reached.
+        private const val MAX_UDP_SESSIONS = 512
     }
 
     private val scope    = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -267,14 +273,25 @@ class TunBridge(
     ) {
         val key = "${if (isIPv6) 6 else 4}:${srcIp.toAddressKey()}:$srcPort→${dstIp.toAddressKey()}:$dstPort"
         val session = udpSessions[key] ?: synchronized(udpSessions) {
-            udpSessions[key] ?: UdpSession(
-                key = key,
-                srcIp = srcIp.copyOf(),
-                srcPort = srcPort,
-                dstIp = dstIp.copyOf(),
-                dstPort = dstPort,
-                isIPv6 = isIPv6,
-            ).also { udpSessions[key] = it }
+            udpSessions[key] ?: run {
+                // Evict oldest session when at the safety cap to prevent OOM.
+                if (udpSessions.size >= MAX_UDP_SESSIONS) {
+                    val oldest = udpSessions.entries.firstOrNull()
+                    if (oldest != null) {
+                        udpSessions.remove(oldest.key)
+                        oldest.value.close()
+                        VpnLogManager.warn("UDP session cap reached — evicted ${oldest.key.take(40)}")
+                    }
+                }
+                UdpSession(
+                    key = key,
+                    srcIp = srcIp.copyOf(),
+                    srcPort = srcPort,
+                    dstIp = dstIp.copyOf(),
+                    dstPort = dstPort,
+                    isIPv6 = isIPv6,
+                ).also { udpSessions[key] = it }
+            }
         }
         session.offer(payload)
     }
@@ -299,12 +316,14 @@ class TunBridge(
         private val active = AtomicBoolean(true)
         private var controlSocket: Socket? = null
         private var udpSocket: DatagramSocket? = null
-        @Volatile private var lastActivityMs = System.currentTimeMillis()
+        // Use elapsedRealtime — immune to system clock adjustments (NTP, timezone, etc.)
+        @Volatile private var lastActivityElapsed = SystemClock.elapsedRealtime()
 
         private val job = scope.launch(Dispatchers.IO) { run() }
 
         fun offer(payload: ByteArray) {
             if (active.get()) {
+                lastActivityElapsed = SystemClock.elapsedRealtime()
                 queue.trySend(payload.copyOf())
             }
         }
@@ -371,10 +390,10 @@ class TunBridge(
                 try {
                     for (payload in queue) {
                         if (!active.get()) break
-                        if (System.currentTimeMillis() - lastActivityMs > STALL_TIMEOUT_MS) break
+                        if (SystemClock.elapsedRealtime() - lastActivityElapsed > STALL_TIMEOUT_MS) break
                         val packet = buildSocksUdpRequest(dstIp, dstPort, payload, isIPv6)
                         udp.send(DatagramPacket(packet, packet.size))
-                        lastActivityMs = System.currentTimeMillis()
+                        lastActivityElapsed = SystemClock.elapsedRealtime()
                     }
                 } finally {
                     receiver.cancel()
@@ -401,7 +420,7 @@ class TunBridge(
                     val packet = DatagramPacket(buffer, buffer.size)
                     udp.receive(packet)
                     val reply = parseSocksUdpReply(packet.data, packet.length) ?: continue
-                    lastActivityMs = System.currentTimeMillis()
+                    lastActivityElapsed = SystemClock.elapsedRealtime()
                     if (reply.payload.isEmpty()) continue
 
                     val remoteIp = reply.address ?: dstIp
@@ -411,7 +430,7 @@ class TunBridge(
                         injectUdp4ToTun(remoteIp, reply.port, srcIp, srcPort, reply.payload)
                     }
                 } catch (_: java.net.SocketTimeoutException) {
-                    if (System.currentTimeMillis() - lastActivityMs > STALL_TIMEOUT_MS) {
+                    if (SystemClock.elapsedRealtime() - lastActivityElapsed > STALL_TIMEOUT_MS) {
                         active.set(false)
                         queue.close()
                         break
@@ -546,7 +565,10 @@ class TunBridge(
         private val isIPv6: Boolean,
     ) {
         private val socket  = Socket()
-        private val toProxy = Channel<ByteArray>(capacity = 2048)
+        // UNLIMITED capacity preserves strict FIFO ordering.
+        // The old capacity=2048 + fallback-coroutine pattern could reorder chunks
+        // when trySend failed and a concurrent coroutine delivered the next payload first.
+        private val toProxy = Channel<ByteArray>(Channel.UNLIMITED)
 
         @Volatile var mySeq: Long = (Random.nextLong() and 0x7FFF_FFFFL)
         @Volatile var myAck: Long = (clientIsn + 1) and 0xFFFF_FFFFL
@@ -557,7 +579,7 @@ class TunBridge(
             vpnService.protect(socket)
             socket.connect(InetSocketAddress("127.0.0.1", socksPort), CONNECT_TIMEOUT_MS)
 
-            socket.soTimeout         = STALL_TIMEOUT_MS
+            socket.soTimeout         = STALL_TIMEOUT_MS.toInt()
             socket.tcpNoDelay        = true
             socket.keepAlive         = true
             socket.receiveBufferSize = 262_144   // 256 KB
@@ -654,9 +676,9 @@ class TunBridge(
             if (!alive) return
             // Immediate ACK keeps device TCP window open
             sendToTun(buildTcp(dstIp, dstPort, srcIp, srcPort, mySeq, myAck, FLAG_ACK))
-            if (!toProxy.trySend(payload).isSuccess) {
-                scope.launch { try { toProxy.send(payload) } catch (_: Exception) {} }
-            }
+            // Channel.UNLIMITED → trySend never fails due to capacity; ordering is guaranteed
+            // because all onData calls originate from the single readLoop coroutine.
+            toProxy.trySend(payload)
         }
 
         fun onAck(seqNum: Long) { /* window management — no action needed */ }
