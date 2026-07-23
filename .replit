@@ -37,12 +37,12 @@ args = "/home/runner/workspace/.venv/bin/python bot.py"
 name = "Cloudflare Tunnel"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "/tmp/cloudflared tunnel run --token $CLOUDFLARE_TOKEN"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "/home/runner/workspace/cloudflared tunnel run --token $CLOUDFLARE_TOKEN"
 
 [[ports]]
 localPort = 25227
