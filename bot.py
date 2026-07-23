@@ -282,7 +282,7 @@ async def push_broadcast_to_backend(
     The backend must resolve file_ids server-side using its own bot-token copy.
     """
     try:
-        async with httpx.AsyncClient(timeout=15, headers={"Authorization": f"Bearer {CF_TOKEN}"}) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             payload: dict = {
                 "title": title,
                 "message": message,
@@ -1128,18 +1128,75 @@ async def _api_media_proxy(request):
         log.warning(f"Media proxy error for {file_id}: {exc}")
         return aio_web.Response(status=502, text="Upstream error")
 
+async def _api_announcements_active(request):
+    """
+    GET /api/announcements/active
+    Returns the most recent media announcement in the shape the Android app expects:
+      { "announcement": { id, mediaUrls, linkUrl, mediaType } | null }
+    """
+    # Find the latest ad that has media
+    ad = next(
+        (a for a in reversed(_announcement_queue) if a.get("file_ids")),
+        None,
+    )
+    if not ad:
+        return aio_web.json_response({"announcement": None})
+
+    media_urls = [
+        f"https://boykta.boykta.dpdns.org/api/media/{fid}"
+        for fid in ad.get("file_ids", [])
+    ]
+    return aio_web.json_response({
+        "announcement": {
+            "id":        ad["id"],
+            "mediaUrls": media_urls,
+            "linkUrl":   "",
+            "mediaType": ad.get("type", "image"),
+        }
+    })
+
+
+async def _api_notifications_latest(request):
+    """
+    GET /api/notifications/latest
+    Returns the most recent broadcast notification:
+      { "notification": { id, title, message, createdAt } | null }
+    """
+    if not _broadcast_log:
+        return aio_web.json_response({"notification": None})
+
+    # _broadcast_log entries: "timestamp | title: text"
+    raw = _broadcast_log[-1]
+    try:
+        ts_part, rest = raw.split(" | ", 1)
+        title_part, msg_part = rest.split(": ", 1)
+    except ValueError:
+        ts_part, title_part, msg_part = raw, "إعلان", raw
+
+    return aio_web.json_response({
+        "notification": {
+            "id":        len(_broadcast_log),
+            "title":     title_part.strip(),
+            "message":   msg_part.strip(),
+            "createdAt": ts_part.strip(),
+        }
+    })
+
+
 async def _api_webhook_sink(request):
     """Absorb stray POST /webhook hits (e.g. Facebook crawler) silently."""
     return aio_web.Response(status=200, text="ok")
 
 def _build_web_app() -> aio_web.Application:
     app = aio_web.Application()
-    app.router.add_get("/health",                  _api_health)
-    app.router.add_get("/api/servers",             _api_get_servers)
-    app.router.add_get("/api/announcements",       _api_get_announcements)
-    app.router.add_post("/api/announcements",      _api_post_announcements)
-    app.router.add_get("/api/media/{file_id}",     _api_media_proxy)
-    app.router.add_post("/webhook",                _api_webhook_sink)
+    app.router.add_get("/health",                       _api_health)
+    app.router.add_get("/api/servers",                  _api_get_servers)
+    app.router.add_get("/api/announcements",            _api_get_announcements)
+    app.router.add_get("/api/announcements/active",     _api_announcements_active)
+    app.router.add_post("/api/announcements",           _api_post_announcements)
+    app.router.add_get("/api/notifications/latest",     _api_notifications_latest)
+    app.router.add_get("/api/media/{file_id}",          _api_media_proxy)
+    app.router.add_post("/webhook",                     _api_webhook_sink)
     return app
 
 
