@@ -1292,15 +1292,28 @@ async def _api_post_announcements(request):
         # If pushed with telegram_file_ids, store/merge into queue
         file_ids = data.get("telegram_file_ids") or []
         if file_ids:
-            ad_id = _next_ad_id()
-            _announcement_queue.append({
-                "id": ad_id,
-                "type": data.get("media_type", "image"),
-                "file_ids": file_ids,
-                "caption": data.get("message", ""),
-                "created_at": now_ts(),
-            })
-            _save_state()
+            media_type = data.get("media_type", "image")
+            # _finalize_ad already stores the item before pushing it to this
+            # process. Avoid showing the same Telegram media twice when the
+            # public BACKEND_URL resolves back to this API.
+            duplicate = next(
+                (
+                    ad for ad in _announcement_queue
+                    if ad.get("type", "image") == media_type
+                    and ad.get("file_ids", []) == file_ids
+                ),
+                None,
+            )
+            if duplicate is None:
+                ad_id = _next_ad_id()
+                _announcement_queue.append({
+                    "id": ad_id,
+                    "type": media_type,
+                    "file_ids": file_ids,
+                    "caption": data.get("message", ""),
+                    "created_at": now_ts(),
+                })
+                _save_state()
         return aio_web.json_response({"ok": True})
     except Exception as exc:
         log.warning(f"POST /api/announcements error: {exc}")

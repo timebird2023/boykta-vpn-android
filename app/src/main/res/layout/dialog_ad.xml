@@ -42,6 +42,18 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
+        <!-- Video announcements use the platform player instead of the image adapter. -->
+        <VideoView
+            android:id="@+id/videoAd"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            android:keepScreenOn="true"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/adBottomSheet"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
         <!-- ===== TIMER PROGRESS BAR (overlaid at bottom of viewpager) ===== -->
         <ProgressBar
             android:id="@+id/pbTimer"

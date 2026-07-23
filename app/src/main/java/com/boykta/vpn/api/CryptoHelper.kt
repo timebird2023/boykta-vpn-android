@@ -139,8 +139,9 @@ object CryptoHelper {
      * the v2 marker check but fail here. Returning null instead of propagating
      * the exception ensures those legacy files still decrypt correctly via v1.
      */
-    private fun tryDecryptV2(raw: ByteArray): String? = try {
+    private fun tryDecryptV2(raw: ByteArray): String? {
         if (raw.size <= 29) return null
+        return try {
         val salt       = raw.copyOfRange(1, 17)
         val iv         = raw.copyOfRange(17, 29)
         val ciphertext = raw.copyOfRange(29, raw.size)
@@ -148,7 +149,8 @@ object CryptoHelper {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
         String(cipher.doFinal(ciphertext), Charsets.UTF_8)
-    } catch (_: Exception) { null }
+        } catch (_: Exception) { null }
+    }
 
     private fun decryptV1(raw: ByteArray): String {
         val iv         = raw.copyOfRange(0, 12)

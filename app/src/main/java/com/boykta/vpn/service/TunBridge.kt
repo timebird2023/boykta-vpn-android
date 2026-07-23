@@ -10,6 +10,10 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
@@ -22,12 +26,11 @@ import kotlin.random.Random
  *
  * Key features:
  *   • Full IPv4 and IPv6 TCP support (SOCKS5 ATYP 0x01 and 0x04)
- *   • QUIC (UDP/443) blocked → Chrome falls back to TCP/TLS through proxy
- *   • DNS (UDP/53) forwarded via protected socket (bypasses proxy — avoids circular DNS)
- *   • Other UDP forwarded direct via protected socket
+ *   • UDP sessions use SOCKS5 UDP ASSOCIATE, preserving source/destination ports
+ *   • DNS and game traffic both travel through the configured Xray outbound
  *   • TCP keep-alive + no-delay on every SOCKS5 socket
  *   • 256 KB socket buffers for gaming/streaming throughput
- *   • STALL DETECTION: 120 s idle → close + inject RST
+ *   • STALL DETECTION: 180 s idle → close + inject RST
  *   • Immediate ACK on data receipt — keeps device TCP window open
  */
 class TunBridge(
@@ -35,6 +38,17 @@ class TunBridge(
     private val socksPort: Int,
     private val vpnService: VpnService,
 ) {
+
+    private data class UdpReply(
+        val address: ByteArray?,
+        val port: Int,
+        val payload: ByteArray
+    )
+
+    private data class SocksAddress(
+        val address: InetAddress,
+        val port: Int
+    )
 
     companion object {
         private const val TAG = "TunBridge"
@@ -55,11 +69,8 @@ class TunBridge(
         private const val IP6_HDR    = 40   // fixed IPv6 header
         private const val TCP_HDR    = 20
 
-        // Block QUIC (UDP/443) so Chrome/browsers fall back to TCP/TLS
-        private const val PORT_QUIC  = 443
-
-        // Stall detection: close idle connections after 180 s
-        // (increased from 120 s — long-poll / SSE / gaming websockets can be idle longer)
+        // Close idle TCP/UDP sessions after 180 s. Game sessions regularly use
+        // long periods with no datagrams, so this is deliberately not aggressive.
         private const val STALL_TIMEOUT_MS  = 180_000
 
         // Connect timeout: 15 s — Cloudflare edge may be slow to ACK under load
@@ -68,6 +79,7 @@ class TunBridge(
 
     private val scope    = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val sessions = ConcurrentHashMap<String, TcpSession>()
+    private val udpSessions = ConcurrentHashMap<String, UdpSession>()
     private val tunIn    = FileInputStream(tunPfd.fileDescriptor)
     private val tunOut   = FileOutputStream(tunPfd.fileDescriptor)
     private val tunLock  = Any()
@@ -78,7 +90,7 @@ class TunBridge(
 
     fun start() {
         running = true
-        VpnLogManager.sys("TunBridge started → SOCKS5 127.0.0.1:$socksPort  (IPv4+IPv6, QUIC-blocked)")
+        VpnLogManager.sys("TunBridge started → SOCKS5 127.0.0.1:$socksPort  (TCP+UDP, IPv4+IPv6)")
         scope.launch { readLoop() }
     }
 
@@ -86,7 +98,9 @@ class TunBridge(
         running = false
         scope.cancel()
         sessions.values.forEach { it.close() }
+        udpSessions.values.forEach { it.close() }
         sessions.clear()
+        udpSessions.clear()
         runCatching { tunIn.close() }
         runCatching { tunOut.close() }
         VpnLogManager.sys("TunBridge stopped")
@@ -224,31 +238,7 @@ class TunBridge(
         if (pkt.size <= payloadOff) return
         val payload = pkt.copyOfRange(payloadOff, pkt.size)
 
-        // Block QUIC (UDP/443) AND HTTP/3 alt-svc probe (UDP/80) so Chrome, Firefox,
-        // and all HTTP/3 clients fall back to TCP/TLS immediately.
-        if (dstPort == PORT_QUIC || dstPort == 80) return
-
-        forwardUdp4(srcIp, srcPort, dstIp, dstPort, payload)
-    }
-
-    private fun forwardUdp4(srcIp: ByteArray, srcPort: Int, dstIp: ByteArray, dstPort: Int, payload: ByteArray) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                java.net.DatagramSocket().use { sock ->
-                    vpnService.protect(sock)
-                    sock.soTimeout = 5_000
-                    val addr = java.net.InetAddress.getByAddress(dstIp)
-                    sock.send(java.net.DatagramPacket(payload, payload.size, addr, dstPort))
-                    // 4096 bytes — handles large DNS responses (DNSSEC, many records)
-                    // and other UDP payloads that exceed the old 2048-byte limit.
-                    val resp = java.net.DatagramPacket(ByteArray(4096), 4096)
-                    try {
-                        sock.receive(resp)
-                        injectUdp4ToTun(dstIp, dstPort, srcIp, srcPort, resp.data.copyOfRange(0, resp.length))
-                    } catch (_: Exception) {}
-                }
-            } catch (_: Exception) {}
-        }
+        forwardUdp(srcIp, srcPort, dstIp, dstPort, payload, isIPv6 = false)
     }
 
     // ── IPv6 UDP handling ─────────────────────────────────────────────────────
@@ -262,28 +252,250 @@ class TunBridge(
         if (pkt.size <= payloadOff) return
         val payload = pkt.copyOfRange(payloadOff, pkt.size)
 
-        // Block QUIC (UDP/443) AND HTTP/3 alt-svc probe (UDP/80) on IPv6 too
-        if (dstPort == PORT_QUIC || dstPort == 80) return
-
-        forwardUdp6(srcIp, srcPort, dstIp, dstPort, payload)
+        forwardUdp(srcIp, srcPort, dstIp, dstPort, payload, isIPv6 = true)
     }
 
-    private fun forwardUdp6(srcIp: ByteArray, srcPort: Int, dstIp: ByteArray, dstPort: Int, payload: ByteArray) {
-        scope.launch(Dispatchers.IO) {
+    /**
+     * One SOCKS5 UDP association is kept per original 5-tuple. The previous
+     * implementation created a protected socket for every packet and waited for
+     * one reply, which dropped most game datagrams and changed the apparent
+     * source port on every send.
+     */
+    private fun forwardUdp(
+        srcIp: ByteArray, srcPort: Int, dstIp: ByteArray, dstPort: Int,
+        payload: ByteArray, isIPv6: Boolean
+    ) {
+        val key = "${if (isIPv6) 6 else 4}:${srcIp.toAddressKey()}:$srcPort→${dstIp.toAddressKey()}:$dstPort"
+        val session = udpSessions[key] ?: synchronized(udpSessions) {
+            udpSessions[key] ?: UdpSession(
+                key = key,
+                srcIp = srcIp.copyOf(),
+                srcPort = srcPort,
+                dstIp = dstIp.copyOf(),
+                dstPort = dstPort,
+                isIPv6 = isIPv6,
+            ).also { udpSessions[key] = it }
+        }
+        session.offer(payload)
+    }
+
+    /**
+     * SOCKS5 UDP association for one original UDP 5-tuple.
+     *
+     * RFC 1928 requires the TCP association to stay open while UDP packets
+     * are exchanged. Keeping both sockets alive is important for games: it
+     * preserves the local source port and allows replies to arrive in either
+     * direction instead of waiting for exactly one response per packet.
+     */
+    private inner class UdpSession(
+        private val key: String,
+        private val srcIp: ByteArray,
+        private val srcPort: Int,
+        private val dstIp: ByteArray,
+        private val dstPort: Int,
+        private val isIPv6: Boolean,
+    ) {
+        private val queue = Channel<ByteArray>(capacity = 512)
+        private val active = AtomicBoolean(true)
+        private var controlSocket: Socket? = null
+        private var udpSocket: DatagramSocket? = null
+        @Volatile private var lastActivityMs = System.currentTimeMillis()
+
+        private val job = scope.launch(Dispatchers.IO) { run() }
+
+        fun offer(payload: ByteArray) {
+            if (active.get()) {
+                queue.trySend(payload.copyOf())
+            }
+        }
+
+        fun close() {
+            if (!active.compareAndSet(true, false)) return
+            queue.close()
+            runCatching { udpSocket?.close() }
+            runCatching { controlSocket?.close() }
+            job.cancel()
+        }
+
+        private suspend fun run() {
             try {
-                java.net.DatagramSocket().use { sock ->
-                    vpnService.protect(sock)
-                    sock.soTimeout = 5_000
-                    val addr = java.net.Inet6Address.getByAddress(null, dstIp, 0)
-                    sock.send(java.net.DatagramPacket(payload, payload.size, addr, dstPort))
-                    // 4096 bytes — matches IPv4 upgrade for large DNS / UDP responses
-                    val resp = java.net.DatagramPacket(ByteArray(4096), 4096)
-                    try {
-                        sock.receive(resp)
-                        injectUdp6ToTun(dstIp, dstPort, srcIp, srcPort, resp.data.copyOfRange(0, resp.length))
-                    } catch (_: Exception) {}
+                val control = Socket()
+                controlSocket = control
+                vpnService.protect(control)
+                control.connect(InetSocketAddress("127.0.0.1", socksPort), CONNECT_TIMEOUT_MS)
+                control.soTimeout = 5_000
+
+                val input = control.getInputStream()
+                val output = control.getOutputStream()
+
+                // Greeting: SOCKS5, one method, no authentication.
+                output.write(byteArrayOf(0x05, 0x01, 0x00))
+                output.flush()
+                val greeting = input.readExact(2)
+                if (greeting[0] != 0x05.toByte() || greeting[1] != 0x00.toByte()) {
+                    throw IllegalStateException("SOCKS5 UDP auth rejected")
                 }
-            } catch (_: Exception) {}
+
+                // UDP ASSOCIATE with an unspecified destination.
+                output.write(byteArrayOf(0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                output.flush()
+                val response = input.readExact(4)
+                if (response[1] != 0x00.toByte()) {
+                    throw IllegalStateException(
+                        "SOCKS5 UDP associate refused code=${response[1].toInt() and 0xFF}"
+                    )
+                }
+                val relay = readSocksAddress(input, response[3].toInt() and 0xFF)
+
+                val udp = DatagramSocket()
+                udpSocket = udp
+                vpnService.protect(udp)
+                udp.connect(
+                    if (relay.address.isAnyLocalAddress) {
+                        InetAddress.getLoopbackAddress()
+                    } else {
+                        relay.address
+                    },
+                    relay.port
+                )
+                udp.soTimeout = 1_000
+
+                VpnLogManager.info(
+                    "UDP relay ${if (isIPv6) dstIp.ip6 else dstIp.ip4}:$dstPort via SOCKS5"
+                )
+
+                val receiver = scope.launch(Dispatchers.IO) {
+                    receiveLoop(udp)
+                }
+
+                try {
+                    for (payload in queue) {
+                        if (!active.get()) break
+                        if (System.currentTimeMillis() - lastActivityMs > STALL_TIMEOUT_MS) break
+                        val packet = buildSocksUdpRequest(dstIp, dstPort, payload, isIPv6)
+                        udp.send(DatagramPacket(packet, packet.size))
+                        lastActivityMs = System.currentTimeMillis()
+                    }
+                } finally {
+                    receiver.cancel()
+                }
+            } catch (e: Exception) {
+                if (running && active.get() && !VpnLogManager.isReconnecting.get()) {
+                    VpnLogManager.warn(
+                        "UDP ${if (isIPv6) dstIp.ip6 else dstIp.ip4}:$dstPort failed: ${e.message}"
+                    )
+                }
+            } finally {
+                active.set(false)
+                queue.close()
+                runCatching { udpSocket?.close() }
+                runCatching { controlSocket?.close() }
+                udpSessions.remove(key, this)
+            }
+        }
+
+        private suspend fun receiveLoop(udp: DatagramSocket) {
+            val buffer = ByteArray(65_535)
+            while (active.get() && running) {
+                try {
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    udp.receive(packet)
+                    val reply = parseSocksUdpReply(packet.data, packet.length) ?: continue
+                    lastActivityMs = System.currentTimeMillis()
+                    if (reply.payload.isEmpty()) continue
+
+                    val remoteIp = reply.address ?: dstIp
+                    if (isIPv6) {
+                        injectUdp6ToTun(remoteIp, reply.port, srcIp, srcPort, reply.payload)
+                    } else {
+                        injectUdp4ToTun(remoteIp, reply.port, srcIp, srcPort, reply.payload)
+                    }
+                } catch (_: java.net.SocketTimeoutException) {
+                    if (System.currentTimeMillis() - lastActivityMs > STALL_TIMEOUT_MS) {
+                        active.set(false)
+                        queue.close()
+                        break
+                    }
+                } catch (_: Exception) {
+                    break
+                }
+            }
+        }
+
+        private fun buildSocksUdpRequest(
+            address: ByteArray,
+            port: Int,
+            payload: ByteArray,
+            ipv6: Boolean
+        ): ByteArray {
+            val addressPart = if (ipv6) address else address
+            val packet = ByteArray(4 + addressPart.size + 2 + payload.size)
+            // RSV(2), FRAG(0), ATYP(IPv4=1 / IPv6=4)
+            packet[3] = if (ipv6) 0x04 else 0x01
+            addressPart.copyInto(packet, 4)
+            val portOffset = 4 + addressPart.size
+            packet[portOffset] = (port ushr 8).toByte()
+            packet[portOffset + 1] = (port and 0xFF).toByte()
+            payload.copyInto(packet, portOffset + 2)
+            return packet
+        }
+
+        private fun parseSocksUdpReply(data: ByteArray, length: Int): UdpReply? {
+            if (length < 4 || data[2].toInt() != 0) return null // FRAG must be zero
+            var offset = 4
+            val atyp = data[3].toInt() and 0xFF
+            val address = when (atyp) {
+                0x01 -> {
+                    if (length < offset + 4) return null
+                    data.copyOfRange(offset, offset + 4).also { offset += 4 }
+                }
+                0x03 -> {
+                    if (length < offset + 1) return null
+                    val size = data[offset].toInt() and 0xFF
+                    offset++
+                    if (length < offset + size) return null
+                    offset += size
+                    null
+                }
+                0x04 -> {
+                    if (length < offset + 16) return null
+                    data.copyOfRange(offset, offset + 16).also { offset += 16 }
+                }
+                else -> return null
+            }
+            if (length < offset + 2) return null
+            val port = ((data[offset].toInt() and 0xFF) shl 8) or
+                (data[offset + 1].toInt() and 0xFF)
+            offset += 2 // source port in the SOCKS5 UDP header
+            if (offset > length) return null
+            return UdpReply(address, port, data.copyOfRange(offset, length))
+        }
+
+        private fun readSocksAddress(input: InputStream, atyp: Int): SocksAddress {
+            val address = when (atyp) {
+                0x01 -> InetAddress.getByAddress(input.readExact(4))
+                0x03 -> {
+                    val length = input.readExact(1)[0].toInt() and 0xFF
+                    InetAddress.getByName(String(input.readExact(length), Charsets.UTF_8))
+                }
+                0x04 -> InetAddress.getByAddress(input.readExact(16))
+                else -> throw IllegalStateException("Unknown SOCKS5 address type: $atyp")
+            }
+            val portBytes = input.readExact(2)
+            val port = ((portBytes[0].toInt() and 0xFF) shl 8) or
+                (portBytes[1].toInt() and 0xFF)
+            return SocksAddress(address, port)
+        }
+
+        private fun InputStream.readExact(size: Int): ByteArray {
+            val result = ByteArray(size)
+            var offset = 0
+            while (offset < size) {
+                val read = read(result, offset, size - offset)
+                if (read < 0) throw java.io.EOFException("EOF after $offset/$size")
+                offset += read
+            }
+            return result
         }
     }
 
@@ -606,6 +818,9 @@ class TunBridge(
                 append(word.toString(16))
             }
         }
+
+    private fun ByteArray.toAddressKey(): String =
+        joinToString(".") { (it.toInt() and 0xFF).toString(16) }
 
     private fun ByteArray.u16(off: Int): Int =
         ((this[off].toInt() and 0xFF) shl 8) or (this[off + 1].toInt() and 0xFF)

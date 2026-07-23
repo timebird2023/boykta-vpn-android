@@ -97,6 +97,14 @@ MainActivity → ServerAdapter → BoykVpnService → XrayManager (JNI → libXr
 - **libXray.aar**: NOT present — VPN engine starts Xray inbounds but TUN→SOCKS5 bridge requires the .aar for native routing. Place in `app/libs/` to enable full device-wide VPN.
 - **SDK License fix**: If Gradle complains about licenses, manually write all hashes to `~/android-sdk/licenses/android-sdk-license` (see memory file `android-build-setup.md`).
 
+## Reliability fixes in the current build
+
+- UDP traffic now uses persistent SOCKS5 `UDP ASSOCIATE` sessions per original flow instead of opening a new direct socket for every packet. This preserves game source ports and supports continuous replies.
+- UDP/443 and UDP/80 are no longer globally dropped; QUIC and game datagrams can reach the configured Xray outbound.
+- Media announcements render as video or an image carousel correctly, and the app polls for new announcements without repeatedly showing the same item.
+- The bot API deduplicates media announcements when the public backend URL routes back to the same bot process.
+- `./gradlew assembleDebug` produces `app/build/outputs/apk/debug/app-debug.apk` successfully.
+
 ## Latest Changes (July 23 2026) — Audit & Hardening Pass 2
 
 ### ملخص التغييرات (Audit & Hardening Pass 2)

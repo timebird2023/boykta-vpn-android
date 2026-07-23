@@ -82,6 +82,7 @@ class MainViewModel @Inject constructor(
     val trafficStats = TrafficCounter.stats
 
     private var lastNotifId = -1
+    private var lastAnnouncementId = -1
     private var autoPingJob: Job? = null
 
     // ── Remote ────────────────────────────────────────────────────────────────
@@ -106,7 +107,13 @@ class MainViewModel @Inject constructor(
 
     fun loadAnnouncement() {
         viewModelScope.launch {
-            try { announcement.value = api.getActiveAnnouncement().announcement } catch (_: Exception) {}
+            try {
+                val next = api.getActiveAnnouncement().announcement
+                if (next != null && next.id != lastAnnouncementId) {
+                    lastAnnouncementId = next.id
+                    announcement.value = next
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -149,6 +156,7 @@ class MainViewModel @Inject constructor(
             while (isActive) {
                 delay(60_000L)
                 checkNotification()
+                loadAnnouncement()
             }
         }
     }

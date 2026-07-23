@@ -195,7 +195,7 @@ class BoykVpnService : VpnService() {
                     .addRoute("0.0.0.0", 0)
                     // IPv6 TUN address + default route — captures IPv6 traffic so it is proxied
                     // through Xray instead of leaking or failing. TunBridge handles IPv6 TCP/UDP
-                    // and blocks QUIC (UDP/443) on both address families.
+                    // with persistent SOCKS5 UDP associations for game traffic.
                     .addAddress("fd00::1", 128)
                     .addRoute("::", 0)
                     .addDisallowedApplication(packageName)   // always exclude self

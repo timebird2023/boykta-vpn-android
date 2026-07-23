@@ -10,6 +10,7 @@ import android.os.Looper
 import android.view.*
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.VideoView
 import androidx.fragment.app.DialogFragment
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
@@ -61,13 +62,27 @@ class AdDialog : DialogFragment() {
         val linkUrl = arguments?.getString(ARG_LINK, "") ?: ""
 
         val vpAd = view.findViewById<ViewPager2>(R.id.vpAd)
+        val videoAd = view.findViewById<VideoView>(R.id.videoAd)
         val pbTimer = view.findViewById<ProgressBar>(R.id.pbTimer)
         val tvTimer = view.findViewById<TextView>(R.id.tvAdTimer)
         val btnClose = view.findViewById<MaterialButton>(R.id.btnClose)
         val layoutAdLink = view.findViewById<View>(R.id.layoutAdLink)
 
-        // Setup image carousel
-        vpAd.adapter = AdImageAdapter(mediaUrls)
+        // Setup the correct renderer for the announcement media type.
+        if (arguments?.getString(ARG_TYPE, "image") == "video") {
+            vpAd.visibility = View.GONE
+            videoAd.visibility = View.VISIBLE
+            mediaUrls.firstOrNull()?.let { url ->
+                videoAd.setVideoURI(Uri.parse(url))
+                videoAd.setOnPreparedListener { player ->
+                    player.isLooping = true
+                    videoAd.start()
+                }
+            }
+        } else {
+            videoAd.visibility = View.GONE
+            vpAd.adapter = AdImageAdapter(mediaUrls)
+        }
         pbTimer.max = AD_DURATION_SEC * 10
         pbTimer.progress = AD_DURATION_SEC * 10
 

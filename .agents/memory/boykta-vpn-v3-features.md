@@ -69,3 +69,10 @@ background_alt: #050508, card: #0A0D12
 - Stub libXray.aar created at build time (9-byte download fails on Replit; compile-time stub works)
 - Real libXray.aar must be placed in app/libs/ for actual VPN functionality
 - Build succeeded: BUILD SUCCESSFUL in 1m 43s
+
+## UDP relay invariant
+The TUN bridge must keep one SOCKS5 UDP ASSOCIATE control/data pair per original UDP flow. Opening a fresh protected socket for every datagram loses replies and breaks games that depend on stable source-port mappings.
+
+**Why:** Game traffic is bidirectional and continuous; one-shot direct forwarding only works for simple request/response DNS-like traffic.
+
+**How to apply:** Preserve the flow key, local source port, relay association, and timeout when changing UDP handling. Do not globally drop UDP/443 or UDP/80 unless an explicit user option requires it.
